@@ -61,6 +61,10 @@ const SPEED_PRESETS = [
   { label: "1.5x", value: 1.5 },
   { label: "2x", value: 2.0 },
   { label: "3x", value: 3.0 },
+  { label: "4x", value: 4.0 },
+  { label: "6x", value: 6.0 },
+  { label: "8x", value: 8.0 },
+  { label: "10x", value: 10.0 },
 ];
 
 // BGM tracks (placeholder data)
@@ -347,48 +351,134 @@ export default function EditorScreen() {
     </View>
   );
 
-  const renderTimeline = () => (
-    <View style={[styles.timeline, { backgroundColor: colors.surface }]}>
-      <View style={styles.timelineBar}>
-        <View
-          style={[
-            styles.timelineFill,
-            {
-              backgroundColor: colors.primary,
-              left: `${(trimStart / (project.duration || 1)) * 100}%`,
-              right: `${100 - (trimEnd / (project.duration || 1)) * 100}%`,
-            },
-          ]}
-        />
-        <View
-          style={[
-            styles.timelineHandle,
-            {
-              left: `${(trimStart / (project.duration || 1)) * 100}%`,
-              backgroundColor: colors.primary,
-            },
-          ]}
-        />
-        <View
-          style={[
-            styles.timelineHandle,
-            {
-              left: `${(trimEnd / (project.duration || 1)) * 100}%`,
-              backgroundColor: colors.primary,
-            },
-          ]}
-        />
+  const renderTimeline = () => {
+    const duration = project.duration || 1;
+    const trimStartPct = (trimStart / duration) * 100;
+    const trimEndPct = (trimEnd / duration) * 100;
+    const trimDuration = trimEnd - trimStart;
+    const effectiveSpeed = speed;
+    const outputDuration = trimDuration / effectiveSpeed;
+
+    // Generate tick marks for the timeline
+    const tickInterval = duration > 60 ? 10 : duration > 10 ? 5 : 1;
+    const ticks: number[] = [];
+    for (let t = 0; t <= duration; t += tickInterval) {
+      ticks.push(t);
+    }
+
+    return (
+      <View style={[styles.timeline, { backgroundColor: colors.surface }]}>
+        {/* Duration info bar */}
+        <View style={styles.timelineInfoBar}>
+          <Text style={[styles.timelineInfoText, { color: colors.muted }]}>
+            選択範囲: {formatTime(trimStart)} - {formatTime(trimEnd)}
+          </Text>
+          <Text style={[styles.timelineInfoText, { color: colors.primary }]}>
+            {formatTime(trimDuration)} ({effectiveSpeed}x → {formatTime(outputDuration)})
+          </Text>
+        </View>
+
+        {/* Tick marks */}
+        <View style={styles.tickContainer}>
+          {ticks.map((t) => (
+            <View
+              key={t}
+              style={[
+                styles.tickMark,
+                {
+                  left: `${(t / duration) * 100}%`,
+                  backgroundColor: colors.border,
+                },
+              ]}
+            />
+          ))}
+        </View>
+
+        {/* Timeline bar */}
+        <View style={[styles.timelineBar, { backgroundColor: `${colors.border}60` }]}>
+          {/* Inactive region left */}
+          <View
+            style={[
+              styles.timelineInactive,
+              {
+                left: 0,
+                width: `${trimStartPct}%`,
+                backgroundColor: "rgba(0,0,0,0.4)",
+              },
+            ]}
+          />
+          {/* Active trim region */}
+          <View
+            style={[
+              styles.timelineFill,
+              {
+                backgroundColor: `${colors.primary}40`,
+                left: `${trimStartPct}%`,
+                right: `${100 - trimEndPct}%`,
+                borderTopWidth: 2,
+                borderBottomWidth: 2,
+                borderColor: colors.primary,
+              },
+            ]}
+          />
+          {/* Inactive region right */}
+          <View
+            style={[
+              styles.timelineInactive,
+              {
+                right: 0,
+                width: `${100 - trimEndPct}%`,
+                backgroundColor: "rgba(0,0,0,0.4)",
+              },
+            ]}
+          />
+          {/* Start handle */}
+          <View
+            style={[
+              styles.timelineHandle,
+              {
+                left: `${trimStartPct}%`,
+                backgroundColor: colors.primary,
+              },
+            ]}
+          >
+            <View style={styles.handleGrip}>
+              <View style={[styles.handleGripLine, { backgroundColor: "#FFFFFF" }]} />
+              <View style={[styles.handleGripLine, { backgroundColor: "#FFFFFF" }]} />
+            </View>
+          </View>
+          {/* End handle */}
+          <View
+            style={[
+              styles.timelineHandle,
+              {
+                left: `${trimEndPct}%`,
+                backgroundColor: colors.primary,
+              },
+            ]}
+          >
+            <View style={styles.handleGrip}>
+              <View style={[styles.handleGripLine, { backgroundColor: "#FFFFFF" }]} />
+              <View style={[styles.handleGripLine, { backgroundColor: "#FFFFFF" }]} />
+            </View>
+          </View>
+        </View>
+
+        {/* Time labels */}
+        <View style={styles.timeLabels}>
+          <Text style={[styles.timeLabel, { color: colors.primary }]}>
+            {formatTime(trimStart)}
+          </Text>
+          <Text style={[styles.timeLabel, { color: colors.muted }]}>
+            {formatTime(duration)}
+          </Text>
+          <Text style={[styles.timeLabel, { color: colors.primary }]}>
+            {formatTime(trimEnd)}
+          </Text>
+        </View>
       </View>
-      <View style={styles.timeLabels}>
-        <Text style={[styles.timeLabel, { color: colors.muted }]}>
-          {formatTime(trimStart)}
-        </Text>
-        <Text style={[styles.timeLabel, { color: colors.muted }]}>
-          {formatTime(trimEnd)}
-        </Text>
-      </View>
-    </View>
-  );
+    );
+  };
 
   const renderToolPanel = () => (
     <Animated.View style={panelAnimStyle}>
@@ -402,83 +492,187 @@ export default function EditorScreen() {
     </Animated.View>
   );
 
-  const renderTrimPanel = () => (
-    <View style={styles.panelInner}>
-      <Text style={[styles.panelTitle, { color: colors.foreground }]}>トリミング</Text>
-      <View style={styles.trimControls}>
-        <View style={styles.trimField}>
-          <Text style={[styles.trimLabel, { color: colors.muted }]}>開始</Text>
-          <View style={[styles.trimInput, { borderColor: colors.border }]}>
-            <Text style={[styles.trimValue, { color: colors.foreground }]}>
-              {formatTime(trimStart)}
-            </Text>
+  const renderTrimPanel = () => {
+    const duration = project.duration || 1;
+    const stepSmall = duration > 60 ? 1.0 : 0.5;
+    const stepLarge = duration > 60 ? 5.0 : 2.0;
+
+    return (
+      <View style={styles.panelInner}>
+        <Text style={[styles.panelTitle, { color: colors.foreground }]}>トリミング</Text>
+        <View style={styles.trimControls}>
+          {/* Start time control */}
+          <View style={styles.trimField}>
+            <Text style={[styles.trimLabel, { color: colors.muted }]}>開始位置</Text>
+            <View style={[styles.trimInput, { borderColor: colors.border, backgroundColor: colors.background }]}>
+              <Text style={[styles.trimValue, { color: colors.primary }]}>
+                {formatTime(trimStart)}
+              </Text>
+            </View>
+            <View style={styles.trimBtns}>
+              <Pressable
+                onPress={() => {
+                  setTrimStart(Math.max(0, trimStart - stepLarge));
+                  if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                }}
+                style={({ pressed }) => [
+                  styles.trimBtn,
+                  { backgroundColor: colors.border },
+                  pressed && { opacity: 0.6 },
+                ]}
+              >
+                <Text style={{ color: colors.foreground, fontWeight: "700", fontSize: 12 }}>-{stepLarge}s</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => setTrimStart(Math.max(0, trimStart - stepSmall))}
+                style={({ pressed }) => [
+                  styles.trimBtn,
+                  { backgroundColor: colors.border },
+                  pressed && { opacity: 0.6 },
+                ]}
+              >
+                <Text style={{ color: colors.foreground, fontWeight: "700", fontSize: 12 }}>-{stepSmall}s</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => setTrimStart(Math.min(trimEnd - 0.5, trimStart + stepSmall))}
+                style={({ pressed }) => [
+                  styles.trimBtn,
+                  { backgroundColor: colors.border },
+                  pressed && { opacity: 0.6 },
+                ]}
+              >
+                <Text style={{ color: colors.foreground, fontWeight: "700", fontSize: 12 }}>+{stepSmall}s</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => {
+                  setTrimStart(Math.min(trimEnd - 0.5, trimStart + stepLarge));
+                  if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                }}
+                style={({ pressed }) => [
+                  styles.trimBtn,
+                  { backgroundColor: colors.border },
+                  pressed && { opacity: 0.6 },
+                ]}
+              >
+                <Text style={{ color: colors.foreground, fontWeight: "700", fontSize: 12 }}>+{stepLarge}s</Text>
+              </Pressable>
+            </View>
           </View>
-          <View style={styles.trimBtns}>
-            <Pressable
-              onPress={() => setTrimStart(Math.max(0, trimStart - 0.5))}
-              style={({ pressed }) => [
-                styles.trimBtn,
-                { backgroundColor: colors.border },
-                pressed && { opacity: 0.6 },
-              ]}
-            >
-              <Text style={{ color: colors.foreground, fontWeight: "600" }}>-</Text>
-            </Pressable>
-            <Pressable
-              onPress={() => setTrimStart(Math.min(trimEnd - 0.5, trimStart + 0.5))}
-              style={({ pressed }) => [
-                styles.trimBtn,
-                { backgroundColor: colors.border },
-                pressed && { opacity: 0.6 },
-              ]}
-            >
-              <Text style={{ color: colors.foreground, fontWeight: "600" }}>+</Text>
-            </Pressable>
+          {/* End time control */}
+          <View style={styles.trimField}>
+            <Text style={[styles.trimLabel, { color: colors.muted }]}>終了位置</Text>
+            <View style={[styles.trimInput, { borderColor: colors.border, backgroundColor: colors.background }]}>
+              <Text style={[styles.trimValue, { color: colors.primary }]}>
+                {formatTime(trimEnd)}
+              </Text>
+            </View>
+            <View style={styles.trimBtns}>
+              <Pressable
+                onPress={() => {
+                  setTrimEnd(Math.max(trimStart + 0.5, trimEnd - stepLarge));
+                  if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                }}
+                style={({ pressed }) => [
+                  styles.trimBtn,
+                  { backgroundColor: colors.border },
+                  pressed && { opacity: 0.6 },
+                ]}
+              >
+                <Text style={{ color: colors.foreground, fontWeight: "700", fontSize: 12 }}>-{stepLarge}s</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => setTrimEnd(Math.max(trimStart + 0.5, trimEnd - stepSmall))}
+                style={({ pressed }) => [
+                  styles.trimBtn,
+                  { backgroundColor: colors.border },
+                  pressed && { opacity: 0.6 },
+                ]}
+              >
+                <Text style={{ color: colors.foreground, fontWeight: "700", fontSize: 12 }}>-{stepSmall}s</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => setTrimEnd(Math.min(duration, trimEnd + stepSmall))}
+                style={({ pressed }) => [
+                  styles.trimBtn,
+                  { backgroundColor: colors.border },
+                  pressed && { opacity: 0.6 },
+                ]}
+              >
+                <Text style={{ color: colors.foreground, fontWeight: "700", fontSize: 12 }}>+{stepSmall}s</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => {
+                  setTrimEnd(Math.min(duration, trimEnd + stepLarge));
+                  if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                }}
+                style={({ pressed }) => [
+                  styles.trimBtn,
+                  { backgroundColor: colors.border },
+                  pressed && { opacity: 0.6 },
+                ]}
+              >
+                <Text style={{ color: colors.foreground, fontWeight: "700", fontSize: 12 }}>+{stepLarge}s</Text>
+              </Pressable>
+            </View>
           </View>
         </View>
-        <View style={styles.trimField}>
-          <Text style={[styles.trimLabel, { color: colors.muted }]}>終了</Text>
-          <View style={[styles.trimInput, { borderColor: colors.border }]}>
-            <Text style={[styles.trimValue, { color: colors.foreground }]}>
-              {formatTime(trimEnd)}
-            </Text>
-          </View>
-          <View style={styles.trimBtns}>
-            <Pressable
-              onPress={() => setTrimEnd(Math.max(trimStart + 0.5, trimEnd - 0.5))}
-              style={({ pressed }) => [
-                styles.trimBtn,
-                { backgroundColor: colors.border },
-                pressed && { opacity: 0.6 },
-              ]}
-            >
-              <Text style={{ color: colors.foreground, fontWeight: "600" }}>-</Text>
-            </Pressable>
-            <Pressable
-              onPress={() => setTrimEnd(Math.min(project.duration, trimEnd + 0.5))}
-              style={({ pressed }) => [
-                styles.trimBtn,
-                { backgroundColor: colors.border },
-                pressed && { opacity: 0.6 },
-              ]}
-            >
-              <Text style={{ color: colors.foreground, fontWeight: "600" }}>+</Text>
-            </Pressable>
-          </View>
+        {/* Quick actions */}
+        <View style={styles.trimQuickActions}>
+          <Pressable
+            onPress={() => {
+              setTrimStart(0);
+              setTrimEnd(duration);
+            }}
+            style={({ pressed }) => [
+              styles.trimQuickBtn,
+              { borderColor: colors.border },
+              pressed && { opacity: 0.7 },
+            ]}
+          >
+            <Text style={[styles.trimQuickBtnText, { color: colors.muted }]}>全体を選択</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => {
+              const mid = duration / 2;
+              const quarter = duration / 4;
+              setTrimStart(Math.max(0, mid - quarter));
+              setTrimEnd(Math.min(duration, mid + quarter));
+            }}
+            style={({ pressed }) => [
+              styles.trimQuickBtn,
+              { borderColor: colors.border },
+              pressed && { opacity: 0.7 },
+            ]}
+          >
+            <Text style={[styles.trimQuickBtnText, { color: colors.muted }]}>中央50%</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => {
+              setTrimStart(0);
+              setTrimEnd(Math.min(duration, 30));
+            }}
+            style={({ pressed }) => [
+              styles.trimQuickBtn,
+              { borderColor: colors.border },
+              pressed && { opacity: 0.7 },
+            ]}
+          >
+            <Text style={[styles.trimQuickBtnText, { color: colors.muted }]}>先頭30秒</Text>
+          </Pressable>
         </View>
+        <Pressable
+          onPress={applyChanges}
+          style={({ pressed }) => [
+            styles.applyBtn,
+            { backgroundColor: colors.primary },
+            pressed && { opacity: 0.9, transform: [{ scale: 0.97 }] },
+          ]}
+        >
+          <Text style={styles.applyBtnText}>適用</Text>
+        </Pressable>
       </View>
-      <Pressable
-        onPress={applyChanges}
-        style={({ pressed }) => [
-          styles.applyBtn,
-          { backgroundColor: colors.primary },
-          pressed && { opacity: 0.9, transform: [{ scale: 0.97 }] },
-        ]}
-      >
-        <Text style={styles.applyBtnText}>適用</Text>
-      </Pressable>
-    </View>
-  );
+    );
+  };
 
   const renderFilterPanel = () => (
     <View style={styles.panelInner}>
@@ -700,54 +894,138 @@ export default function EditorScreen() {
     </View>
   );
 
-  const renderSpeedPanel = () => (
-    <View style={styles.panelInner}>
-      <Text style={[styles.panelTitle, { color: colors.foreground }]}>再生速度</Text>
-      <Text style={[styles.speedValue, { color: colors.primary }]}>
-        {speed.toFixed(2)}x
-      </Text>
-      <View style={styles.speedPresets}>
-        {SPEED_PRESETS.map((preset) => (
-          <Pressable
-            key={preset.value}
-            onPress={() => {
-              setSpeed(preset.value);
-              if (Platform.OS !== "web")
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            }}
-            style={({ pressed }) => [
-              styles.speedBtn,
-              {
-                backgroundColor:
-                  speed === preset.value ? colors.primary : colors.border,
-              },
-              pressed && { opacity: 0.7 },
-            ]}
-          >
-            <Text
-              style={{
-                color: speed === preset.value ? "#FFFFFF" : colors.muted,
-                fontWeight: "700",
-                fontSize: 14,
-              }}
-            >
-              {preset.label}
+  const renderSpeedPanel = () => {
+    const trimDuration = trimEnd - trimStart;
+    const outputDuration = trimDuration / speed;
+    const isHighSpeed = speed >= 4;
+
+    return (
+      <View style={styles.panelInner}>
+        <Text style={[styles.panelTitle, { color: colors.foreground }]}>再生速度</Text>
+        <View style={styles.speedDisplay}>
+          <Text style={[styles.speedValue, { color: colors.primary }]}>
+            {speed >= 1 ? `${speed}` : speed.toFixed(2)}x
+          </Text>
+          <Text style={[styles.speedOutputInfo, { color: colors.muted }]}>
+            出力: {formatTime(outputDuration)}
+          </Text>
+          {isHighSpeed && (
+            <Text style={[styles.speedWarning, { color: colors.warning }]}>
+              高速再生モード
             </Text>
-          </Pressable>
-        ))}
+          )}
+        </View>
+        {/* Slow motion section */}
+        <Text style={[styles.speedSectionLabel, { color: colors.muted }]}>スローモーション</Text>
+        <View style={styles.speedPresets}>
+          {SPEED_PRESETS.filter((p) => p.value < 1).map((preset) => (
+            <Pressable
+              key={preset.value}
+              onPress={() => {
+                setSpeed(preset.value);
+                if (Platform.OS !== "web")
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              }}
+              style={({ pressed }) => [
+                styles.speedBtn,
+                {
+                  backgroundColor:
+                    speed === preset.value ? colors.primary : colors.border,
+                },
+                pressed && { opacity: 0.7 },
+              ]}
+            >
+              <Text
+                style={{
+                  color: speed === preset.value ? "#FFFFFF" : colors.muted,
+                  fontWeight: "700",
+                  fontSize: 14,
+                }}
+              >
+                {preset.label}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+        {/* Normal speed section */}
+        <Text style={[styles.speedSectionLabel, { color: colors.muted }]}>通常速度</Text>
+        <View style={styles.speedPresets}>
+          {SPEED_PRESETS.filter((p) => p.value >= 1 && p.value <= 3).map((preset) => (
+            <Pressable
+              key={preset.value}
+              onPress={() => {
+                setSpeed(preset.value);
+                if (Platform.OS !== "web")
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              }}
+              style={({ pressed }) => [
+                styles.speedBtn,
+                {
+                  backgroundColor:
+                    speed === preset.value ? colors.primary : colors.border,
+                },
+                pressed && { opacity: 0.7 },
+              ]}
+            >
+              <Text
+                style={{
+                  color: speed === preset.value ? "#FFFFFF" : colors.muted,
+                  fontWeight: "700",
+                  fontSize: 14,
+                }}
+              >
+                {preset.label}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+        {/* High speed section */}
+        <Text style={[styles.speedSectionLabel, { color: colors.warning }]}>高速再生</Text>
+        <View style={styles.speedPresets}>
+          {SPEED_PRESETS.filter((p) => p.value > 3).map((preset) => (
+            <Pressable
+              key={preset.value}
+              onPress={() => {
+                setSpeed(preset.value);
+                if (Platform.OS !== "web")
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+              }}
+              style={({ pressed }) => [
+                styles.speedBtn,
+                {
+                  backgroundColor:
+                    speed === preset.value ? colors.warning : colors.border,
+                  borderWidth: speed === preset.value ? 0 : 1,
+                  borderColor: `${colors.warning}40`,
+                },
+                pressed && { opacity: 0.7 },
+              ]}
+            >
+              <Text
+                style={{
+                  color: speed === preset.value ? "#FFFFFF" : colors.warning,
+                  fontWeight: "700",
+                  fontSize: 14,
+                }}
+              >
+                {preset.label}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+        <Pressable
+          onPress={applyChanges}
+          style={({ pressed }) => [
+            styles.applyBtn,
+            { backgroundColor: colors.primary },
+            pressed && { opacity: 0.9, transform: [{ scale: 0.97 }] },
+          ]}
+        >
+          <Text style={styles.applyBtnText}>適用</Text>
+        </Pressable>
       </View>
-      <Pressable
-        onPress={applyChanges}
-        style={({ pressed }) => [
-          styles.applyBtn,
-          { backgroundColor: colors.primary },
-          pressed && { opacity: 0.9, transform: [{ scale: 0.97 }] },
-        ]}
-      >
-        <Text style={styles.applyBtnText}>適用</Text>
-      </Pressable>
-    </View>
-  );
+    );
+  };
 
   const renderToolbar = () => (
     <View
@@ -1044,27 +1322,61 @@ const styles = StyleSheet.create({
   // ---- Timeline ----
   timeline: {
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: 10,
+  },
+  timelineInfoBar: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 8,
+  },
+  timelineInfoText: {
+    fontSize: 11,
+    fontWeight: "600",
+  },
+  tickContainer: {
+    height: 6,
+    position: "relative",
+    marginBottom: 2,
+  },
+  tickMark: {
+    position: "absolute",
+    top: 0,
+    width: 1,
+    height: 6,
   },
   timelineBar: {
-    height: 4,
-    backgroundColor: "rgba(255,255,255,0.1)",
-    borderRadius: 2,
+    height: 36,
+    borderRadius: 6,
     position: "relative",
+    overflow: "hidden",
+  },
+  timelineInactive: {
+    position: "absolute",
+    top: 0,
+    bottom: 0,
   },
   timelineFill: {
     position: "absolute",
     top: 0,
     bottom: 0,
-    borderRadius: 2,
   },
   timelineHandle: {
     position: "absolute",
-    top: -6,
+    top: 0,
+    width: 14,
+    height: 36,
+    borderRadius: 3,
+    marginLeft: -7,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  handleGrip: {
+    gap: 2,
+  },
+  handleGripLine: {
     width: 4,
-    height: 16,
-    borderRadius: 2,
-    marginLeft: -2,
+    height: 1.5,
+    borderRadius: 1,
   },
   timeLabels: {
     flexDirection: "row",
@@ -1072,8 +1384,8 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   timeLabel: {
-    fontSize: 12,
-    fontWeight: "500",
+    fontSize: 11,
+    fontWeight: "600",
   },
   // ---- Tool Panel ----
   panelContent: {
@@ -1116,13 +1428,29 @@ const styles = StyleSheet.create({
   },
   trimBtns: {
     flexDirection: "row",
-    gap: 8,
+    gap: 6,
   },
   trimBtn: {
     flex: 1,
-    paddingVertical: 8,
+    paddingVertical: 7,
     borderRadius: 8,
     alignItems: "center",
+  },
+  trimQuickActions: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 12,
+  },
+  trimQuickBtn: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: "center",
+  },
+  trimQuickBtnText: {
+    fontSize: 12,
+    fontWeight: "600",
   },
   // ---- Filter Panel ----
   filterScroll: {
@@ -1199,23 +1527,39 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   // ---- Speed Panel ----
+  speedDisplay: {
+    alignItems: "center",
+    marginBottom: 12,
+  },
   speedValue: {
-    fontSize: 40,
+    fontSize: 36,
     fontWeight: "800",
     textAlign: "center",
-    marginBottom: 16,
+  },
+  speedOutputInfo: {
+    fontSize: 13,
+    marginTop: 2,
+  },
+  speedWarning: {
+    fontSize: 12,
+    fontWeight: "600",
+    marginTop: 4,
+  },
+  speedSectionLabel: {
+    fontSize: 12,
+    fontWeight: "600",
+    marginBottom: 6,
   },
   speedPresets: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 10,
-    justifyContent: "center",
-    marginBottom: 16,
+    gap: 8,
+    marginBottom: 12,
   },
   speedBtn: {
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 10,
   },
   // ---- Apply Button ----
   applyBtn: {
