@@ -5,7 +5,6 @@ import { SymbolWeight, SymbolViewProps } from "expo-symbols";
 import { ComponentProps } from "react";
 import { OpaqueColorValue, type StyleProp, type TextStyle } from "react-native";
 
-type IconMapping = Record<SymbolViewProps["name"], ComponentProps<typeof MaterialIcons>["name"]>;
 type IconSymbolName = keyof typeof MAPPING;
 
 const MAPPING = {
@@ -47,7 +46,14 @@ const MAPPING = {
   "trash": "delete-outline",
   "rectangle.on.rectangle": "filter-none",
   "video.badge.plus": "video-library",
-} as IconMapping;
+  "speaker.wave.2": "volume-up",
+  "speaker.slash": "volume-off",
+  "headphones": "headset",
+  "waveform": "graphic-eq",
+  "s.circle": "surround-sound",
+  "lock.fill": "lock",
+  "lock.open": "lock-open",
+} as const;
 
 export function IconSymbol({
   name,
@@ -61,5 +67,5 @@ export function IconSymbol({
   style?: StyleProp<TextStyle>;
   weight?: SymbolWeight;
 }) {
-  return <MaterialIcons color={color} size={size} name={MAPPING[name]} style={style} />;
+  return <MaterialIcons color={color} size={size} name={MAPPING[name] as any} style={style} />;
 }

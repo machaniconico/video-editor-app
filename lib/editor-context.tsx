@@ -40,6 +40,46 @@ export interface BGMTrack {
   volume: number;
 }
 
+// ---- Multi-track types ----
+
+export type TrackType = "video" | "audio" | "bgm";
+
+export interface TimelineClip {
+  id: string;
+  /** Source URI (video file or audio file) */
+  sourceUri: string;
+  /** Display name */
+  name: string;
+  /** Duration in seconds */
+  duration: number;
+  /** Trim start within the clip (seconds) */
+  trimStart: number;
+  /** Trim end within the clip (seconds) */
+  trimEnd: number;
+  /** Offset on the timeline (seconds from 0) */
+  timelineOffset: number;
+  /** Playback speed */
+  speed: number;
+  /** Volume (0-1) */
+  volume: number;
+}
+
+export interface TimelineTrack {
+  id: string;
+  type: TrackType;
+  label: string;
+  /** Clips on this track */
+  clips: TimelineClip[];
+  /** Is the track muted? */
+  isMuted: boolean;
+  /** Is the track in solo mode? */
+  isSolo: boolean;
+  /** Track volume (0-1) */
+  volume: number;
+  /** Track color for UI */
+  color: string;
+}
+
 export interface VideoProject {
   id: string;
   title: string;
@@ -57,6 +97,8 @@ export interface VideoProject {
   speed: number;
   frameLayout: FrameLayout;
   frameSlots: FrameSlot[];
+  /** Multi-track timeline */
+  tracks: TimelineTrack[];
 }
 
 interface EditorState {
@@ -111,6 +153,69 @@ function editorReducer(state: EditorState, action: EditorAction): EditorState {
     default:
       return state;
   }
+}
+
+// Track color palette
+const TRACK_COLORS = {
+  video: ["#6366F1", "#8B5CF6", "#A78BFA", "#C4B5FD"],
+  audio: ["#F59E0B", "#FBBF24", "#FCD34D", "#FDE68A"],
+  bgm: ["#10B981", "#34D399", "#6EE7B7", "#A7F3D0"],
+};
+
+/** Create a default video track from the main video */
+export function createDefaultTracks(videoUri: string, duration: number): TimelineTrack[] {
+  return [
+    {
+      id: `track_v1_${Date.now()}`,
+      type: "video",
+      label: "ビデオ 1",
+      clips: [
+        {
+          id: `clip_v1_${Date.now()}`,
+          sourceUri: videoUri,
+          name: "メイン動画",
+          duration,
+          trimStart: 0,
+          trimEnd: duration,
+          timelineOffset: 0,
+          speed: 1.0,
+          volume: 1.0,
+        },
+      ],
+      isMuted: false,
+      isSolo: false,
+      volume: 1.0,
+      color: TRACK_COLORS.video[0],
+    },
+    {
+      id: `track_a1_${Date.now()}`,
+      type: "audio",
+      label: "音声 1",
+      clips: [
+        {
+          id: `clip_a1_${Date.now()}`,
+          sourceUri: videoUri,
+          name: "メイン音声",
+          duration,
+          trimStart: 0,
+          trimEnd: duration,
+          timelineOffset: 0,
+          speed: 1.0,
+          volume: 1.0,
+        },
+      ],
+      isMuted: false,
+      isSolo: false,
+      volume: 1.0,
+      color: TRACK_COLORS.audio[0],
+    },
+  ];
+}
+
+/** Get next track color */
+export function getNextTrackColor(type: TrackType, existingCount: number): string {
+  const palette = TRACK_COLORS[type];
+  return palette[existingCount % palette.length];
 }
 
 interface EditorContextType {
@@ -171,6 +276,7 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
         speed: 1.0,
         frameLayout: "single",
         frameSlots: [],
+        tracks: createDefaultTracks(videoUri, duration),
       };
       dispatch({ type: "ADD_PROJECT", payload: project });
       dispatch({ type: "SET_CURRENT_PROJECT", payload: project });

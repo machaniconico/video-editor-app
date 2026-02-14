@@ -28,6 +28,9 @@ import { useColors } from "@/hooks/use-colors";
 import { useEditor } from "@/lib/editor-context";
 import { useOrientation } from "@/hooks/use-orientation";
 import { launchImageLibraryAsync } from "expo-image-picker";
+import { MultiTrackTimeline } from "@/components/multi-track-timeline";
+import type { TimelineTrack } from "@/lib/editor-context";
+import { createDefaultTracks } from "@/lib/editor-context";
 
 // Filter definitions
 const FILTERS = [
@@ -125,6 +128,13 @@ export default function EditorScreen() {
   const [textOverlays, setTextOverlays] = useState<import("@/lib/editor-context").TextOverlay[]>(project?.textOverlays ?? []);
   const [selectedTextId, setSelectedTextId] = useState<string | null>(null);
 
+  // Multi-track timeline state
+  const [tracks, setTracks] = useState<TimelineTrack[]>(
+    project?.tracks ?? (project ? createDefaultTracks(project.videoUri, project.duration) : [])
+  );
+  const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
+  const [showMultiTrack, setShowMultiTrack] = useState(false);
+
   const panelHeight = useSharedValue(0);
   const panelAnimStyle = useAnimatedStyle(() => ({
     height: panelHeight.value,
@@ -180,6 +190,7 @@ export default function EditorScreen() {
       setFrameLayout(project.frameLayout ?? "single");
       setFrameSlots(project.frameSlots ?? []);
       setTextOverlays(project.textOverlays ?? []);
+      setTracks(project.tracks ?? createDefaultTracks(project.videoUri, project.duration));
     }
   }, [project?.id]);
 
@@ -262,6 +273,7 @@ export default function EditorScreen() {
     updates.frameLayout = frameLayout;
     updates.frameSlots = frameSlots;
     updates.textOverlays = textOverlays;
+    updates.tracks = tracks;
 
     dispatch({ type: "UPDATE_CURRENT_PROJECT", payload: updates });
     setActivePanel("none");
@@ -282,6 +294,7 @@ export default function EditorScreen() {
     frameLayout,
     frameSlots,
     textOverlays,
+    tracks,
     dispatch,
     panelHeight,
   ]);
@@ -1591,7 +1604,18 @@ export default function EditorScreen() {
             {/* Left: Video preview (takes most space) */}
             <View style={styles.landscapeVideoArea}>
               {renderVideoPreview()}
-              {renderTimeline()}
+              {showMultiTrack ? (
+                <MultiTrackTimeline
+                  tracks={tracks}
+                  totalDuration={project.duration}
+                  onTracksChange={setTracks}
+                  onClipSelect={(trackId, clipId) => setSelectedClipId(clipId || null)}
+                  selectedClipId={selectedClipId}
+                  isLandscape
+                />
+              ) : (
+                renderTimeline()
+              )}
             </View>
 
             {/* Right: Tool panel or toolbar */}
@@ -1659,8 +1683,42 @@ export default function EditorScreen() {
         {/* Video Preview */}
         {renderVideoPreview()}
 
+        {/* Timeline toggle */}
+        <View style={[styles.timelineToggle, { backgroundColor: colors.surface, borderTopColor: colors.border }]}>
+          <Pressable
+            onPress={() => { setShowMultiTrack(false); if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); }}
+            style={({ pressed }) => [
+              styles.timelineToggleBtn,
+              !showMultiTrack && { backgroundColor: `${colors.primary}20`, borderColor: colors.primary },
+              pressed && { opacity: 0.7 },
+            ]}
+          >
+            <Text style={{ color: !showMultiTrack ? colors.primary : colors.muted, fontSize: 12, fontWeight: "600" }}>シンプル</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => { setShowMultiTrack(true); if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); }}
+            style={({ pressed }) => [
+              styles.timelineToggleBtn,
+              showMultiTrack && { backgroundColor: `${colors.primary}20`, borderColor: colors.primary },
+              pressed && { opacity: 0.7 },
+            ]}
+          >
+            <Text style={{ color: showMultiTrack ? colors.primary : colors.muted, fontSize: 12, fontWeight: "600" }}>マルチトラック</Text>
+          </Pressable>
+        </View>
+
         {/* Timeline */}
-        {renderTimeline()}
+        {showMultiTrack ? (
+          <MultiTrackTimeline
+            tracks={tracks}
+            totalDuration={project.duration}
+            onTracksChange={setTracks}
+            onClipSelect={(trackId, clipId) => setSelectedClipId(clipId || null)}
+            selectedClipId={selectedClipId}
+          />
+        ) : (
+          renderTimeline()
+        )}
 
         {/* Tool Panel (animated) */}
         {renderToolPanel()}
@@ -2098,5 +2156,21 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingVertical: 10,
     borderRadius: 12,
+  },
+  // ---- Timeline Toggle ----
+  timelineToggle: {
+    flexDirection: "row",
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderTopWidth: 0.5,
+  },
+  timelineToggleBtn: {
+    flex: 1,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "transparent",
+    alignItems: "center",
   },
 });
