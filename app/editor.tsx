@@ -1,4 +1,4 @@
-import { useRef, useState, useCallback, useEffect } from "react";
+import { useRef, useState, useCallback, useEffect, useMemo } from "react";
 import {
   Text,
   View,
@@ -193,6 +193,133 @@ export default function EditorScreen() {
       setTracks(project.tracks ?? createDefaultTracks(project.videoUri, project.duration));
     }
   }, [project?.id]);
+
+  // ---- Sync timeline track state to video player ----
+
+  // Compute effective volume and speed from tracks
+  const effectivePlayerState = useMemo(() => {
+    // Find the first video track
+    const videoTrack = tracks.find((t) => t.type === "video");
+    const audioTrack = tracks.find((t) => t.type === "audio");
+
+    // Determine if any track is in solo mode
+    const hasSolo = tracks.some((t) => t.isSolo);
+
+    // Video track speed (from first clip)
+    let videoSpeed = 1.0;
+    let videoTrimStart = 0;
+    let videoTrimEnd = project?.duration ?? 0;
+    if (videoTrack && videoTrack.clips.length > 0) {
+      const clip = videoTrack.clips[0];
+      videoSpeed = clip.speed;
+      videoTrimStart = clip.trimStart;
+      videoTrimEnd = clip.trimEnd;
+    }
+
+    // Calculate effective volume:
+    // Video track contributes to video volume, audio track to audio volume
+    // When muted or solo logic applies, adjust accordingly
+    let videoMuted = false;
+    let audioVolume = 1.0;
+
+    if (videoTrack) {
+      const isVideoActive = hasSolo ? videoTrack.isSolo : !videoTrack.isMuted;
+      videoMuted = !isVideoActive;
+    }
+
+    if (audioTrack) {
+      const isAudioActive = hasSolo ? audioTrack.isSolo : !audioTrack.isMuted;
+      if (!isAudioActive) {
+        audioVolume = 0;
+      } else {
+        // Combine track volume with first clip volume
+        const clipVol = audioTrack.clips.length > 0 ? audioTrack.clips[0].volume : 1.0;
+        audioVolume = audioTrack.volume * clipVol;
+      }
+    }
+
+    // If video track is not muted, combine its volume too
+    let finalVolume = audioVolume;
+    if (videoTrack && !videoMuted) {
+      const videoClipVol = videoTrack.clips.length > 0 ? videoTrack.clips[0].volume : 1.0;
+      // Blend: use max of video and audio volume contributions
+      finalVolume = Math.max(audioVolume, videoTrack.volume * videoClipVol);
+    }
+
+    // If both video and audio are muted
+    const allMuted = videoMuted && audioVolume === 0;
+
+    return {
+      speed: videoSpeed,
+      volume: Math.max(0, Math.min(1, finalVolume)),
+      muted: allMuted,
+      trimStart: videoTrimStart,
+      trimEnd: videoTrimEnd,
+    };
+  }, [tracks, project?.duration]);
+
+  // Apply speed changes to player
+  useEffect(() => {
+    if (player && effectivePlayerState.speed > 0) {
+      try {
+        player.playbackRate = effectivePlayerState.speed;
+      } catch (e) {
+        // playbackRate may not be supported on all platforms
+      }
+    }
+  }, [player, effectivePlayerState.speed]);
+
+  // Apply volume changes to player
+  useEffect(() => {
+    if (player) {
+      try {
+        player.volume = effectivePlayerState.volume;
+        player.muted = effectivePlayerState.muted;
+      } catch (e) {
+        // volume/muted may not be supported on all platforms
+      }
+    }
+  }, [player, effectivePlayerState.volume, effectivePlayerState.muted]);
+
+  // Apply trim changes: seek to trimStart when trim changes
+  useEffect(() => {
+    if (player && effectivePlayerState.trimStart >= 0) {
+      try {
+        player.currentTime = effectivePlayerState.trimStart;
+      } catch (e) {
+        // currentTime may not be supported on all platforms
+      }
+    }
+  }, [player, effectivePlayerState.trimStart]);
+
+  // Enforce trim boundaries during playback
+  useEffect(() => {
+    if (!player || !isPlaying) return;
+    const interval = setInterval(() => {
+      try {
+        const currentTime = player.currentTime;
+        if (currentTime >= effectivePlayerState.trimEnd) {
+          player.currentTime = effectivePlayerState.trimStart;
+        } else if (currentTime < effectivePlayerState.trimStart) {
+          player.currentTime = effectivePlayerState.trimStart;
+        }
+      } catch (e) {
+        // ignore
+      }
+    }, 200);
+    return () => clearInterval(interval);
+  }, [player, isPlaying, effectivePlayerState.trimStart, effectivePlayerState.trimEnd]);
+
+  // Also sync the legacy speed state with track speed
+  useEffect(() => {
+    setSpeed(effectivePlayerState.speed);
+  }, [effectivePlayerState.speed]);
+
+  // Sync legacy trim state with track trim
+  useEffect(() => {
+    setTrimStart(effectivePlayerState.trimStart);
+    setTrimEnd(effectivePlayerState.trimEnd);
+  }, [effectivePlayerState.trimStart, effectivePlayerState.trimEnd]);
 
   const togglePlay = useCallback(() => {
     if (Platform.OS !== "web") {
@@ -423,6 +550,24 @@ export default function EditorScreen() {
           </Text>
         </View>
       )}
+      {/* Status badges (speed / volume / muted) */}
+      <View style={styles.previewBadges} pointerEvents="none">
+        {effectivePlayerState.speed !== 1.0 && (
+          <View style={[styles.previewBadge, { backgroundColor: "rgba(99,102,241,0.85)" }]}>
+            <Text style={styles.previewBadgeText}>{effectivePlayerState.speed}x</Text>
+          </View>
+        )}
+        {effectivePlayerState.muted && (
+          <View style={[styles.previewBadge, { backgroundColor: "rgba(239,68,68,0.85)" }]}>
+            <Text style={styles.previewBadgeText}>ミュート</Text>
+          </View>
+        )}
+        {!effectivePlayerState.muted && effectivePlayerState.volume < 1.0 && effectivePlayerState.volume > 0 && (
+          <View style={[styles.previewBadge, { backgroundColor: "rgba(245,158,11,0.85)" }]}>
+            <Text style={styles.previewBadgeText}>音量 {Math.round(effectivePlayerState.volume * 100)}%</Text>
+          </View>
+        )}
+      </View>
       {/* Fullscreen toggle button */}
       <Pressable
         onPress={() => {
@@ -2158,6 +2303,25 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingVertical: 10,
     borderRadius: 12,
+  },
+  // ---- Preview Badges ----
+  previewBadges: {
+    position: "absolute",
+    top: 10,
+    left: 10,
+    flexDirection: "row",
+    gap: 6,
+    zIndex: 10,
+  },
+  previewBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
+  },
+  previewBadgeText: {
+    color: "#FFFFFF",
+    fontSize: 11,
+    fontWeight: "700",
   },
   // ---- Fullscreen Button ----
   fullscreenBtn: {
