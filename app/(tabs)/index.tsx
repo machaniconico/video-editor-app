@@ -1,4 +1,4 @@
-import { useEffect, useCallback } from "react";
+import { useEffect, useCallback, useState } from "react";
 import {
   Text,
   View,
@@ -7,6 +7,8 @@ import {
   StyleSheet,
   Platform,
   ActivityIndicator,
+  Alert,
+  Modal,
 } from "react-native";
 import { Image } from "expo-image";
 import { useRouter } from "expo-router";
@@ -17,11 +19,16 @@ import { ScreenContainer } from "@/components/screen-container";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useColors } from "@/hooks/use-colors";
 import { useEditor, type VideoProject } from "@/lib/editor-context";
+import { SwipeableRow } from "@/components/swipeable-row";
 
 export default function HomeScreen() {
   const colors = useColors();
   const router = useRouter();
   const { state, dispatch, loadProjects, saveProjects, createProject } = useEditor();
+
+  // Confirmation dialog state (for web fallback)
+  const [deleteTarget, setDeleteTarget] = useState<VideoProject | null>(null);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
 
   useEffect(() => {
     loadProjects();
@@ -41,10 +48,9 @@ export default function HomeScreen() {
 
       if (!result.canceled && result.assets[0]) {
         const asset = result.assets[0];
-        const duration = (asset.duration ?? 0) / 1000; // convert ms to seconds
+        const duration = (asset.duration ?? 0) / 1000;
         const project = createProject(asset.uri, duration, null);
 
-        // Save after creating
         const updatedProjects = [project, ...state.projects];
         await saveProjects(updatedProjects);
 
@@ -66,6 +72,56 @@ export default function HomeScreen() {
     [dispatch, router]
   );
 
+  const confirmDelete = useCallback(
+    (project: VideoProject) => {
+      if (Platform.OS === "web") {
+        // Web: use custom modal
+        setDeleteTarget(project);
+        setShowDeleteModal(true);
+      } else {
+        // Native: use Alert
+        Alert.alert(
+          "プロジェクトを削除",
+          `「${project.title}」を削除しますか？\nこの操作は取り消せません。`,
+          [
+            { text: "キャンセル", style: "cancel" },
+            {
+              text: "削除",
+              style: "destructive",
+              onPress: () => executeDelete(project),
+            },
+          ]
+        );
+      }
+    },
+    []
+  );
+
+  const executeDelete = useCallback(
+    async (project: VideoProject) => {
+      if (Platform.OS !== "web") {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      }
+      dispatch({ type: "DELETE_PROJECT", payload: project.id });
+      const updatedProjects = state.projects.filter((p) => p.id !== project.id);
+      await saveProjects(updatedProjects);
+    },
+    [dispatch, state.projects, saveProjects]
+  );
+
+  const handleWebDeleteConfirm = useCallback(async () => {
+    if (deleteTarget) {
+      await executeDelete(deleteTarget);
+    }
+    setShowDeleteModal(false);
+    setDeleteTarget(null);
+  }, [deleteTarget, executeDelete]);
+
+  const handleWebDeleteCancel = useCallback(() => {
+    setShowDeleteModal(false);
+    setDeleteTarget(null);
+  }, []);
+
   const formatDate = (dateStr: string) => {
     const d = new Date(dateStr);
     return `${d.getMonth() + 1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")}`;
@@ -78,31 +134,35 @@ export default function HomeScreen() {
   };
 
   const renderProject = ({ item }: { item: VideoProject }) => (
-    <Pressable
-      onPress={() => openProject(item)}
-      style={({ pressed }) => [
-        styles.projectCard,
-        { backgroundColor: colors.surface, borderColor: colors.border },
-        pressed && { opacity: 0.7 },
-      ]}
-    >
-      <View style={[styles.thumbnail, { backgroundColor: colors.border }]}>
-        {item.thumbnailUri ? (
-          <Image source={{ uri: item.thumbnailUri }} style={styles.thumbnailImage} contentFit="cover" />
-        ) : (
-          <IconSymbol name="film" size={32} color={colors.muted} />
-        )}
-      </View>
-      <View style={styles.projectInfo}>
-        <Text style={[styles.projectTitle, { color: colors.foreground }]} numberOfLines={1}>
-          {item.title}
-        </Text>
-        <Text style={[styles.projectMeta, { color: colors.muted }]}>
-          {formatDuration(item.duration)} · {formatDate(item.updatedAt)}
-        </Text>
-      </View>
-      <IconSymbol name="chevron.right" size={20} color={colors.muted} />
-    </Pressable>
+    <SwipeableRow onDelete={() => confirmDelete(item)}>
+      <Pressable
+        onPress={() => openProject(item)}
+        style={({ pressed }) => [
+          styles.projectCard,
+          { backgroundColor: colors.surface, borderColor: colors.border },
+          pressed && { opacity: 0.7 },
+        ]}
+      >
+        <View style={[styles.thumbnail, { backgroundColor: colors.border }]}>
+          {item.thumbnailUri ? (
+            <Image source={{ uri: item.thumbnailUri }} style={styles.thumbnailImage} contentFit="cover" />
+          ) : (
+            <IconSymbol name="film" size={32} color={colors.muted} />
+          )}
+        </View>
+        <View style={styles.projectInfo}>
+          <Text style={[styles.projectTitle, { color: colors.foreground }]} numberOfLines={1}>
+            {item.title}
+          </Text>
+          <Text style={[styles.projectMeta, { color: colors.muted }]}>
+            {formatDuration(item.duration)} · {formatDate(item.updatedAt)}
+          </Text>
+        </View>
+        <View style={styles.swipeHint}>
+          <IconSymbol name="chevron.right" size={20} color={colors.muted} />
+        </View>
+      </Pressable>
+    </SwipeableRow>
   );
 
   return (
@@ -163,6 +223,65 @@ export default function HomeScreen() {
           />
         )}
       </View>
+
+      {/* Web Delete Confirmation Modal */}
+      {Platform.OS === "web" && (
+        <Modal
+          visible={showDeleteModal}
+          transparent
+          animationType="fade"
+          onRequestClose={handleWebDeleteCancel}
+        >
+          <Pressable
+            onPress={handleWebDeleteCancel}
+            style={styles.modalOverlay}
+          >
+            <Pressable
+              onPress={() => {}}
+              style={[styles.modalContent, { backgroundColor: colors.surface }]}
+            >
+              <View style={styles.modalIconContainer}>
+                <View style={[styles.modalIconCircle, { backgroundColor: "#FF3B3020" }]}>
+                  <IconSymbol name="trash.fill" size={28} color="#FF3B30" />
+                </View>
+              </View>
+              <Text style={[styles.modalTitle, { color: colors.foreground }]}>
+                プロジェクトを削除
+              </Text>
+              <Text style={[styles.modalMessage, { color: colors.muted }]}>
+                「{deleteTarget?.title}」を削除しますか？{"\n"}この操作は取り消せません。
+              </Text>
+              <View style={styles.modalButtons}>
+                <Pressable
+                  onPress={handleWebDeleteCancel}
+                  style={({ pressed }) => [
+                    styles.modalBtn,
+                    styles.modalCancelBtn,
+                    { borderColor: colors.border },
+                    pressed && { opacity: 0.7 },
+                  ]}
+                >
+                  <Text style={[styles.modalBtnText, { color: colors.foreground }]}>
+                    キャンセル
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={handleWebDeleteConfirm}
+                  style={({ pressed }) => [
+                    styles.modalBtn,
+                    styles.modalDeleteBtn,
+                    pressed && { opacity: 0.8 },
+                  ]}
+                >
+                  <Text style={[styles.modalBtnText, { color: "#FFFFFF" }]}>
+                    削除
+                  </Text>
+                </Pressable>
+              </View>
+            </Pressable>
+          </Pressable>
+        </Modal>
+      )}
     </ScreenContainer>
   );
 }
@@ -228,7 +347,6 @@ const styles = StyleSheet.create({
     padding: 12,
     borderRadius: 12,
     borderWidth: 1,
-    marginBottom: 8,
   },
   thumbnail: {
     width: 64,
@@ -254,6 +372,9 @@ const styles = StyleSheet.create({
     fontSize: 13,
     marginTop: 2,
   },
+  swipeHint: {
+    paddingLeft: 8,
+  },
   listContent: {
     paddingBottom: 20,
   },
@@ -271,5 +392,60 @@ const styles = StyleSheet.create({
   emptySubtext: {
     fontSize: 14,
     textAlign: "center",
+  },
+  // Modal styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.6)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  modalContent: {
+    width: 320,
+    borderRadius: 20,
+    padding: 24,
+    alignItems: "center",
+  },
+  modalIconContainer: {
+    marginBottom: 16,
+  },
+  modalIconCircle: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: "700",
+    marginBottom: 8,
+  },
+  modalMessage: {
+    fontSize: 15,
+    textAlign: "center",
+    lineHeight: 22,
+    marginBottom: 24,
+  },
+  modalButtons: {
+    flexDirection: "row",
+    gap: 12,
+    width: "100%",
+  },
+  modalBtn: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: "center",
+  },
+  modalCancelBtn: {
+    borderWidth: 1,
+  },
+  modalDeleteBtn: {
+    backgroundColor: "#FF3B30",
+  },
+  modalBtnText: {
+    fontSize: 16,
+    fontWeight: "700",
   },
 });
