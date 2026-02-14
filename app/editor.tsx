@@ -133,7 +133,7 @@ export default function EditorScreen() {
     project?.tracks ?? (project ? createDefaultTracks(project.videoUri, project.duration) : [])
   );
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
-  const [showMultiTrack, setShowMultiTrack] = useState(false);
+  const [isFullscreenPreview, setIsFullscreenPreview] = useState(false);
 
   const panelHeight = useSharedValue(0);
   const panelAnimStyle = useAnimatedStyle(() => ({
@@ -339,7 +339,11 @@ export default function EditorScreen() {
   // ---- Shared sub-components ----
 
   const renderVideoPreview = () => (
-    <View style={[styles.previewContainer, isLandscape && styles.previewContainerLandscape]}>
+    <View style={[
+      styles.previewContainer,
+      isLandscape && styles.previewContainerLandscape,
+      isFullscreenPreview && { flex: 1 },
+    ]}>
       <VideoView
         style={styles.videoView}
         player={player}
@@ -419,6 +423,24 @@ export default function EditorScreen() {
           </Text>
         </View>
       )}
+      {/* Fullscreen toggle button */}
+      <Pressable
+        onPress={() => {
+          setIsFullscreenPreview((prev) => !prev);
+          if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        }}
+        style={({ pressed }) => [
+          styles.fullscreenBtn,
+          { backgroundColor: "rgba(0,0,0,0.5)" },
+          pressed && { opacity: 0.7 },
+        ]}
+      >
+        <IconSymbol
+          name={isFullscreenPreview ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right"}
+          size={20}
+          color="#FFFFFF"
+        />
+      </Pressable>
       {/* Play/Pause overlay */}
       <Pressable
         onPress={togglePlay}
@@ -1572,7 +1594,8 @@ export default function EditorScreen() {
         edges={["left", "right"]}
       >
         <View style={styles.editorContainer}>
-          {/* Compact Top Bar for landscape */}
+          {/* Compact Top Bar for landscape (hidden in fullscreen) */}
+          {!isFullscreenPreview && (
           <View style={[styles.topBarLandscape, { borderBottomColor: colors.border }]}>
             <Pressable
               onPress={() => router.back()}
@@ -1598,13 +1621,14 @@ export default function EditorScreen() {
               <Text style={styles.exportBtnText}>エクスポート</Text>
             </Pressable>
           </View>
+          )}
 
           {/* Landscape main area: Video + Toolbar side by side */}
-          <View style={styles.landscapeBody}>
+          <View style={[styles.landscapeBody, isFullscreenPreview && { flex: 1 }]}>
             {/* Left: Video preview (takes most space) */}
             <View style={styles.landscapeVideoArea}>
               {renderVideoPreview()}
-              {showMultiTrack ? (
+              {!isFullscreenPreview && (
                 <MultiTrackTimeline
                   tracks={tracks}
                   totalDuration={project.duration}
@@ -1613,33 +1637,33 @@ export default function EditorScreen() {
                   selectedClipId={selectedClipId}
                   isLandscape
                 />
-              ) : (
-                renderTimeline()
               )}
             </View>
 
-            {/* Right: Tool panel or toolbar */}
-            {activePanel !== "none" ? (
-              <ScrollView
-                style={[
-                  styles.landscapePanelArea,
-                  { backgroundColor: colors.surface, borderLeftColor: colors.border },
-                ]}
-                showsVerticalScrollIndicator={false}
-              >
-                <View style={styles.panelContent}>
-                  {activePanel === "trim" && renderTrimPanel()}
-                  {activePanel === "filter" && renderFilterPanel()}
-                  {activePanel === "text" && renderTextPanel()}
-                  {activePanel === "music" && renderMusicPanel()}
-                  {activePanel === "speed" && renderSpeedPanel()}
-                  {activePanel === "frame" && renderFramePanel()}
-                </View>
-                {/* Inline toolbar at bottom of panel */}
-                {renderToolbar()}
-              </ScrollView>
-            ) : (
-              renderToolbar()
+            {/* Right: Tool panel or toolbar (hidden in fullscreen) */}
+            {!isFullscreenPreview && (
+              activePanel !== "none" ? (
+                <ScrollView
+                  style={[
+                    styles.landscapePanelArea,
+                    { backgroundColor: colors.surface, borderLeftColor: colors.border },
+                  ]}
+                  showsVerticalScrollIndicator={false}
+                >
+                  <View style={styles.panelContent}>
+                    {activePanel === "trim" && renderTrimPanel()}
+                    {activePanel === "filter" && renderFilterPanel()}
+                    {activePanel === "text" && renderTextPanel()}
+                    {activePanel === "music" && renderMusicPanel()}
+                    {activePanel === "speed" && renderSpeedPanel()}
+                    {activePanel === "frame" && renderFramePanel()}
+                  </View>
+                  {/* Inline toolbar at bottom of panel */}
+                  {renderToolbar()}
+                </ScrollView>
+              ) : (
+                renderToolbar()
+              )
             )}
           </View>
         </View>
@@ -1654,7 +1678,8 @@ export default function EditorScreen() {
       edges={["top", "bottom", "left", "right"]}
     >
       <View style={styles.editorContainer}>
-        {/* Top Bar */}
+        {/* Top Bar (hidden in fullscreen) */}
+        {!isFullscreenPreview && (
         <View style={[styles.topBar, { borderBottomColor: colors.border }]}>
           <Pressable
             onPress={() => router.back()}
@@ -1679,52 +1704,29 @@ export default function EditorScreen() {
             <Text style={styles.exportBtnText}>エクスポート</Text>
           </Pressable>
         </View>
+        )}
 
         {/* Video Preview */}
         {renderVideoPreview()}
 
-        {/* Timeline toggle */}
-        <View style={[styles.timelineToggle, { backgroundColor: colors.surface, borderTopColor: colors.border }]}>
-          <Pressable
-            onPress={() => { setShowMultiTrack(false); if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); }}
-            style={({ pressed }) => [
-              styles.timelineToggleBtn,
-              !showMultiTrack && { backgroundColor: `${colors.primary}20`, borderColor: colors.primary },
-              pressed && { opacity: 0.7 },
-            ]}
-          >
-            <Text style={{ color: !showMultiTrack ? colors.primary : colors.muted, fontSize: 12, fontWeight: "600" }}>シンプル</Text>
-          </Pressable>
-          <Pressable
-            onPress={() => { setShowMultiTrack(true); if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); }}
-            style={({ pressed }) => [
-              styles.timelineToggleBtn,
-              showMultiTrack && { backgroundColor: `${colors.primary}20`, borderColor: colors.primary },
-              pressed && { opacity: 0.7 },
-            ]}
-          >
-            <Text style={{ color: showMultiTrack ? colors.primary : colors.muted, fontSize: 12, fontWeight: "600" }}>マルチトラック</Text>
-          </Pressable>
-        </View>
+        {/* Timeline + Tools (hidden in fullscreen) */}
+        {!isFullscreenPreview && (
+          <>
+            <MultiTrackTimeline
+              tracks={tracks}
+              totalDuration={project.duration}
+              onTracksChange={setTracks}
+              onClipSelect={(trackId, clipId) => setSelectedClipId(clipId || null)}
+              selectedClipId={selectedClipId}
+            />
 
-        {/* Timeline */}
-        {showMultiTrack ? (
-          <MultiTrackTimeline
-            tracks={tracks}
-            totalDuration={project.duration}
-            onTracksChange={setTracks}
-            onClipSelect={(trackId, clipId) => setSelectedClipId(clipId || null)}
-            selectedClipId={selectedClipId}
-          />
-        ) : (
-          renderTimeline()
+            {/* Tool Panel (animated) */}
+            {renderToolPanel()}
+
+            {/* Bottom Toolbar */}
+            {renderToolbar()}
+          </>
         )}
-
-        {/* Tool Panel (animated) */}
-        {renderToolPanel()}
-
-        {/* Bottom Toolbar */}
-        {renderToolbar()}
       </View>
     </ScreenContainer>
   );
@@ -2157,20 +2159,16 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderRadius: 12,
   },
-  // ---- Timeline Toggle ----
-  timelineToggle: {
-    flexDirection: "row",
-    gap: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderTopWidth: 0.5,
-  },
-  timelineToggleBtn: {
-    flex: 1,
-    paddingVertical: 6,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "transparent",
+  // ---- Fullscreen Button ----
+  fullscreenBtn: {
+    position: "absolute",
+    bottom: 10,
+    right: 10,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     alignItems: "center",
+    justifyContent: "center",
+    zIndex: 10,
   },
 });

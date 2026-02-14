@@ -53,6 +53,8 @@ const MAPPING = {
   "s.circle": "surround-sound",
   "lock.fill": "lock",
   "lock.open": "lock-open",
+  "arrow.up.left.and.arrow.down.right": "fullscreen",
+  "arrow.down.right.and.arrow.up.left": "fullscreen-exit",
 } as const;
 
 export function IconSymbol({
