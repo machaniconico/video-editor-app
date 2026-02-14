@@ -1,0 +1,9 @@
+Screenshot review notes:
+- Home screen displays correctly with dark theme
+- "VideoEdit Pro" title and subtitle visible
+- Purple "新しいプロジェクト" (New Project) CTA button working
+- "最近のプロジェクト" section showing empty state with icon
+- Tab bar at bottom with ホーム (Home) and プロジェクト (Projects) tabs
+- Dark background (#0A0A0F) applied correctly
+- Purple accent color (#6C5CE7) applied to CTA button
+- Overall layout looks clean and professional
