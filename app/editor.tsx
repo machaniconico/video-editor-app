@@ -14,6 +14,8 @@ import { useRouter } from "expo-router";
 import { VideoView, useVideoPlayer } from "expo-video";
 import { useEvent } from "expo";
 import * as Haptics from "expo-haptics";
+import * as ScreenOrientation from "expo-screen-orientation";
+import { useFocusEffect } from "@react-navigation/native";
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -24,8 +26,7 @@ import { ScreenContainer } from "@/components/screen-container";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useColors } from "@/hooks/use-colors";
 import { useEditor } from "@/lib/editor-context";
-
-const SCREEN_WIDTH = Dimensions.get("window").width;
+import { useOrientation } from "@/hooks/use-orientation";
 
 // Filter definitions
 const FILTERS = [
@@ -83,6 +84,8 @@ export default function EditorScreen() {
   const router = useRouter();
   const { state, dispatch } = useEditor();
   const project = state.currentProject;
+  const { orientation, dimensions } = useOrientation();
+  const isLandscape = orientation === "landscape";
 
   const [activePanel, setActivePanel] = useState<PanelType>("none");
   const [selectedFilter, setSelectedFilter] = useState("original");
@@ -101,8 +104,30 @@ export default function EditorScreen() {
   const panelHeight = useSharedValue(0);
   const panelAnimStyle = useAnimatedStyle(() => ({
     height: panelHeight.value,
-    overflow: "hidden",
+    overflow: "hidden" as const,
   }));
+
+  // Unlock orientation when entering editor, lock back to portrait when leaving
+  useFocusEffect(
+    useCallback(() => {
+      const unlock = async () => {
+        if (Platform.OS !== "web") {
+          await ScreenOrientation.lockAsync(
+            ScreenOrientation.OrientationLock.DEFAULT
+          );
+        }
+      };
+      unlock();
+
+      return () => {
+        if (Platform.OS !== "web") {
+          ScreenOrientation.lockAsync(
+            ScreenOrientation.OrientationLock.PORTRAIT_UP
+          );
+        }
+      };
+    }, [])
+  );
 
   // Video player
   const player = useVideoPlayer(project?.videoUri ?? "", (p) => {
@@ -152,10 +177,10 @@ export default function EditorScreen() {
         panelHeight.value = withTiming(0, { duration: 250 });
       } else {
         setActivePanel(panel);
-        panelHeight.value = withTiming(280, { duration: 250 });
+        panelHeight.value = withTiming(isLandscape ? 220 : 280, { duration: 250 });
       }
     },
-    [activePanel, panelHeight]
+    [activePanel, panelHeight, isLandscape]
   );
 
   const applyChanges = useCallback(() => {
@@ -171,7 +196,11 @@ export default function EditorScreen() {
     };
 
     if (selectedFilter !== "original") {
-      updates.filter = { id: selectedFilter, name: FILTERS.find((f) => f.id === selectedFilter)?.name ?? "", intensity: filterIntensity };
+      updates.filter = {
+        id: selectedFilter,
+        name: FILTERS.find((f) => f.id === selectedFilter)?.name ?? "",
+        intensity: filterIntensity,
+      };
     } else {
       updates.filter = null;
     }
@@ -235,7 +264,9 @@ export default function EditorScreen() {
     return (
       <ScreenContainer containerClassName="bg-background" edges={["top", "bottom", "left", "right"]}>
         <View style={styles.errorContainer}>
-          <Text style={[styles.errorText, { color: colors.muted }]}>プロジェクトが選択されていません</Text>
+          <Text style={[styles.errorText, { color: colors.muted }]}>
+            プロジェクトが選択されていません
+          </Text>
           <Pressable
             onPress={() => router.back()}
             style={({ pressed }) => [
@@ -258,8 +289,607 @@ export default function EditorScreen() {
 
   const filterOverlay = FILTERS.find((f) => f.id === selectedFilter);
 
+  // ---- Shared sub-components ----
+
+  const renderVideoPreview = () => (
+    <View style={[styles.previewContainer, isLandscape && styles.previewContainerLandscape]}>
+      <VideoView
+        style={styles.videoView}
+        player={player}
+        contentFit="contain"
+        nativeControls={false}
+      />
+      {/* Filter overlay */}
+      {filterOverlay && filterOverlay.color !== "transparent" && (
+        <View
+          style={[
+            styles.filterOverlay,
+            { backgroundColor: filterOverlay.color, opacity: filterIntensity / 100 },
+          ]}
+          pointerEvents="none"
+        />
+      )}
+      {/* Text overlay */}
+      {textInput.trim() !== "" && (
+        <View
+          style={[
+            styles.textOverlayContainer,
+            textPosition === "top" && { top: 20 },
+            textPosition === "center" && { top: "40%" },
+            textPosition === "bottom" && { bottom: 20 },
+          ]}
+          pointerEvents="none"
+        >
+          <Text
+            style={[
+              styles.textOverlay,
+              {
+                color: textColor,
+                fontSize: textSize,
+              },
+            ]}
+          >
+            {textInput}
+          </Text>
+        </View>
+      )}
+      {/* Play/Pause overlay */}
+      <Pressable
+        onPress={togglePlay}
+        style={({ pressed }) => [styles.playOverlay, pressed && { opacity: 0.8 }]}
+      >
+        {!isPlaying && (
+          <View style={styles.playButton}>
+            <IconSymbol name="play.fill" size={36} color="#FFFFFF" />
+          </View>
+        )}
+      </Pressable>
+    </View>
+  );
+
+  const renderTimeline = () => (
+    <View style={[styles.timeline, { backgroundColor: colors.surface }]}>
+      <View style={styles.timelineBar}>
+        <View
+          style={[
+            styles.timelineFill,
+            {
+              backgroundColor: colors.primary,
+              left: `${(trimStart / (project.duration || 1)) * 100}%`,
+              right: `${100 - (trimEnd / (project.duration || 1)) * 100}%`,
+            },
+          ]}
+        />
+        <View
+          style={[
+            styles.timelineHandle,
+            {
+              left: `${(trimStart / (project.duration || 1)) * 100}%`,
+              backgroundColor: colors.primary,
+            },
+          ]}
+        />
+        <View
+          style={[
+            styles.timelineHandle,
+            {
+              left: `${(trimEnd / (project.duration || 1)) * 100}%`,
+              backgroundColor: colors.primary,
+            },
+          ]}
+        />
+      </View>
+      <View style={styles.timeLabels}>
+        <Text style={[styles.timeLabel, { color: colors.muted }]}>
+          {formatTime(trimStart)}
+        </Text>
+        <Text style={[styles.timeLabel, { color: colors.muted }]}>
+          {formatTime(trimEnd)}
+        </Text>
+      </View>
+    </View>
+  );
+
+  const renderToolPanel = () => (
+    <Animated.View style={panelAnimStyle}>
+      <View style={[styles.panelContent, { backgroundColor: colors.surface }]}>
+        {activePanel === "trim" && renderTrimPanel()}
+        {activePanel === "filter" && renderFilterPanel()}
+        {activePanel === "text" && renderTextPanel()}
+        {activePanel === "music" && renderMusicPanel()}
+        {activePanel === "speed" && renderSpeedPanel()}
+      </View>
+    </Animated.View>
+  );
+
+  const renderTrimPanel = () => (
+    <View style={styles.panelInner}>
+      <Text style={[styles.panelTitle, { color: colors.foreground }]}>トリミング</Text>
+      <View style={styles.trimControls}>
+        <View style={styles.trimField}>
+          <Text style={[styles.trimLabel, { color: colors.muted }]}>開始</Text>
+          <View style={[styles.trimInput, { borderColor: colors.border }]}>
+            <Text style={[styles.trimValue, { color: colors.foreground }]}>
+              {formatTime(trimStart)}
+            </Text>
+          </View>
+          <View style={styles.trimBtns}>
+            <Pressable
+              onPress={() => setTrimStart(Math.max(0, trimStart - 0.5))}
+              style={({ pressed }) => [
+                styles.trimBtn,
+                { backgroundColor: colors.border },
+                pressed && { opacity: 0.6 },
+              ]}
+            >
+              <Text style={{ color: colors.foreground, fontWeight: "600" }}>-</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => setTrimStart(Math.min(trimEnd - 0.5, trimStart + 0.5))}
+              style={({ pressed }) => [
+                styles.trimBtn,
+                { backgroundColor: colors.border },
+                pressed && { opacity: 0.6 },
+              ]}
+            >
+              <Text style={{ color: colors.foreground, fontWeight: "600" }}>+</Text>
+            </Pressable>
+          </View>
+        </View>
+        <View style={styles.trimField}>
+          <Text style={[styles.trimLabel, { color: colors.muted }]}>終了</Text>
+          <View style={[styles.trimInput, { borderColor: colors.border }]}>
+            <Text style={[styles.trimValue, { color: colors.foreground }]}>
+              {formatTime(trimEnd)}
+            </Text>
+          </View>
+          <View style={styles.trimBtns}>
+            <Pressable
+              onPress={() => setTrimEnd(Math.max(trimStart + 0.5, trimEnd - 0.5))}
+              style={({ pressed }) => [
+                styles.trimBtn,
+                { backgroundColor: colors.border },
+                pressed && { opacity: 0.6 },
+              ]}
+            >
+              <Text style={{ color: colors.foreground, fontWeight: "600" }}>-</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => setTrimEnd(Math.min(project.duration, trimEnd + 0.5))}
+              style={({ pressed }) => [
+                styles.trimBtn,
+                { backgroundColor: colors.border },
+                pressed && { opacity: 0.6 },
+              ]}
+            >
+              <Text style={{ color: colors.foreground, fontWeight: "600" }}>+</Text>
+            </Pressable>
+          </View>
+        </View>
+      </View>
+      <Pressable
+        onPress={applyChanges}
+        style={({ pressed }) => [
+          styles.applyBtn,
+          { backgroundColor: colors.primary },
+          pressed && { opacity: 0.9, transform: [{ scale: 0.97 }] },
+        ]}
+      >
+        <Text style={styles.applyBtnText}>適用</Text>
+      </Pressable>
+    </View>
+  );
+
+  const renderFilterPanel = () => (
+    <View style={styles.panelInner}>
+      <Text style={[styles.panelTitle, { color: colors.foreground }]}>フィルター</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterScroll}>
+        {FILTERS.map((f) => (
+          <Pressable
+            key={f.id}
+            onPress={() => {
+              setSelectedFilter(f.id);
+              if (Platform.OS !== "web")
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            }}
+            style={({ pressed }) => [
+              styles.filterItem,
+              selectedFilter === f.id && { borderColor: colors.primary, borderWidth: 2 },
+              pressed && { opacity: 0.7 },
+            ]}
+          >
+            <View
+              style={[
+                styles.filterPreview,
+                {
+                  backgroundColor:
+                    f.color === "transparent" ? colors.border : f.color,
+                },
+              ]}
+            />
+            <Text
+              style={[
+                styles.filterName,
+                {
+                  color: selectedFilter === f.id ? colors.primary : colors.muted,
+                },
+              ]}
+            >
+              {f.name}
+            </Text>
+          </Pressable>
+        ))}
+      </ScrollView>
+      <Pressable
+        onPress={applyChanges}
+        style={({ pressed }) => [
+          styles.applyBtn,
+          { backgroundColor: colors.primary },
+          pressed && { opacity: 0.9, transform: [{ scale: 0.97 }] },
+        ]}
+      >
+        <Text style={styles.applyBtnText}>適用</Text>
+      </Pressable>
+    </View>
+  );
+
+  const renderTextPanel = () => (
+    <View style={styles.panelInner}>
+      <Text style={[styles.panelTitle, { color: colors.foreground }]}>テキスト</Text>
+      <TextInput
+        value={textInput}
+        onChangeText={setTextInput}
+        placeholder="テキストを入力..."
+        placeholderTextColor={colors.muted}
+        style={[
+          styles.textInputField,
+          {
+            color: colors.foreground,
+            borderColor: colors.border,
+            backgroundColor: colors.background,
+          },
+        ]}
+        returnKeyType="done"
+      />
+      <Text style={[styles.subLabel, { color: colors.muted }]}>カラー</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+        <View style={styles.colorRow}>
+          {TEXT_COLORS.map((c) => (
+            <Pressable
+              key={c}
+              onPress={() => setTextColor(c)}
+              style={[
+                styles.colorDot,
+                { backgroundColor: c },
+                textColor === c && { borderColor: colors.primary, borderWidth: 2 },
+              ]}
+            />
+          ))}
+        </View>
+      </ScrollView>
+      <Text style={[styles.subLabel, { color: colors.muted }]}>位置</Text>
+      <View style={styles.positionRow}>
+        {(["top", "center", "bottom"] as const).map((pos) => (
+          <Pressable
+            key={pos}
+            onPress={() => setTextPosition(pos)}
+            style={({ pressed }) => [
+              styles.positionBtn,
+              {
+                borderColor: textPosition === pos ? colors.primary : colors.border,
+              },
+              pressed && { opacity: 0.7 },
+            ]}
+          >
+            <Text
+              style={{
+                color: textPosition === pos ? colors.primary : colors.muted,
+                fontWeight: "600",
+                fontSize: 13,
+              }}
+            >
+              {pos === "top" ? "上" : pos === "center" ? "中央" : "下"}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+      <Pressable
+        onPress={applyChanges}
+        style={({ pressed }) => [
+          styles.applyBtn,
+          { backgroundColor: colors.primary },
+          pressed && { opacity: 0.9, transform: [{ scale: 0.97 }] },
+        ]}
+      >
+        <Text style={styles.applyBtnText}>適用</Text>
+      </Pressable>
+    </View>
+  );
+
+  const renderMusicPanel = () => (
+    <View style={styles.panelInner}>
+      <Text style={[styles.panelTitle, { color: colors.foreground }]}>BGM</Text>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={{ marginBottom: 8 }}
+      >
+        {BGM_CATEGORIES.map((cat) => (
+          <Pressable
+            key={cat}
+            onPress={() => setSelectedBgmCategory(cat)}
+            style={({ pressed }) => [
+              styles.categoryChip,
+              {
+                backgroundColor:
+                  selectedBgmCategory === cat ? colors.primary : colors.border,
+              },
+              pressed && { opacity: 0.7 },
+            ]}
+          >
+            <Text
+              style={{
+                color: selectedBgmCategory === cat ? "#FFFFFF" : colors.muted,
+                fontSize: 13,
+                fontWeight: "600",
+              }}
+            >
+              {cat}
+            </Text>
+          </Pressable>
+        ))}
+      </ScrollView>
+      <ScrollView style={{ maxHeight: 140 }} showsVerticalScrollIndicator={false}>
+        {filteredBgm.map((track) => (
+          <Pressable
+            key={track.id}
+            onPress={() => {
+              setSelectedBgm(selectedBgm === track.id ? null : track.id);
+              if (Platform.OS !== "web")
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            }}
+            style={({ pressed }) => [
+              styles.bgmItem,
+              {
+                borderColor:
+                  selectedBgm === track.id ? colors.primary : colors.border,
+                backgroundColor:
+                  selectedBgm === track.id ? `${colors.primary}15` : "transparent",
+              },
+              pressed && { opacity: 0.7 },
+            ]}
+          >
+            <IconSymbol
+              name="music.note"
+              size={18}
+              color={selectedBgm === track.id ? colors.primary : colors.muted}
+            />
+            <View style={{ flex: 1, marginLeft: 10 }}>
+              <Text
+                style={{
+                  color:
+                    selectedBgm === track.id ? colors.primary : colors.foreground,
+                  fontWeight: "600",
+                  fontSize: 14,
+                }}
+              >
+                {track.title}
+              </Text>
+              <Text style={{ color: colors.muted, fontSize: 12 }}>
+                {track.category} ·{" "}
+                {Math.floor(track.duration / 60)}:
+                {String(track.duration % 60).padStart(2, "0")}
+              </Text>
+            </View>
+            {selectedBgm === track.id && (
+              <IconSymbol name="checkmark" size={18} color={colors.primary} />
+            )}
+          </Pressable>
+        ))}
+      </ScrollView>
+      <Pressable
+        onPress={applyChanges}
+        style={({ pressed }) => [
+          styles.applyBtn,
+          { backgroundColor: colors.primary },
+          pressed && { opacity: 0.9, transform: [{ scale: 0.97 }] },
+        ]}
+      >
+        <Text style={styles.applyBtnText}>適用</Text>
+      </Pressable>
+    </View>
+  );
+
+  const renderSpeedPanel = () => (
+    <View style={styles.panelInner}>
+      <Text style={[styles.panelTitle, { color: colors.foreground }]}>再生速度</Text>
+      <Text style={[styles.speedValue, { color: colors.primary }]}>
+        {speed.toFixed(2)}x
+      </Text>
+      <View style={styles.speedPresets}>
+        {SPEED_PRESETS.map((preset) => (
+          <Pressable
+            key={preset.value}
+            onPress={() => {
+              setSpeed(preset.value);
+              if (Platform.OS !== "web")
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            }}
+            style={({ pressed }) => [
+              styles.speedBtn,
+              {
+                backgroundColor:
+                  speed === preset.value ? colors.primary : colors.border,
+              },
+              pressed && { opacity: 0.7 },
+            ]}
+          >
+            <Text
+              style={{
+                color: speed === preset.value ? "#FFFFFF" : colors.muted,
+                fontWeight: "700",
+                fontSize: 14,
+              }}
+            >
+              {preset.label}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+      <Pressable
+        onPress={applyChanges}
+        style={({ pressed }) => [
+          styles.applyBtn,
+          { backgroundColor: colors.primary },
+          pressed && { opacity: 0.9, transform: [{ scale: 0.97 }] },
+        ]}
+      >
+        <Text style={styles.applyBtnText}>適用</Text>
+      </Pressable>
+    </View>
+  );
+
+  const renderToolbar = () => (
+    <View
+      style={[
+        isLandscape ? styles.toolbarLandscape : styles.toolbar,
+        {
+          backgroundColor: colors.surface,
+          borderTopColor: colors.border,
+          borderLeftColor: colors.border,
+        },
+      ]}
+    >
+      {([
+        { key: "trim" as PanelType, icon: "scissors" as const, label: "トリミング" },
+        { key: "filter" as PanelType, icon: "wand.and.stars" as const, label: "フィルター" },
+        { key: "text" as PanelType, icon: "textformat" as const, label: "テキスト" },
+        { key: "music" as PanelType, icon: "music.note" as const, label: "BGM" },
+        { key: "speed" as PanelType, icon: "speedometer" as const, label: "速度" },
+      ]).map((tool) => (
+        <Pressable
+          key={tool.key}
+          onPress={() => openPanel(tool.key)}
+          style={({ pressed }) => [
+            isLandscape ? styles.toolBtnLandscape : styles.toolBtn,
+            pressed && { opacity: 0.6 },
+          ]}
+        >
+          <IconSymbol
+            name={tool.icon}
+            size={isLandscape ? 22 : 24}
+            color={activePanel === tool.key ? colors.primary : colors.muted}
+          />
+          <Text
+            style={[
+              styles.toolLabel,
+              { color: activePanel === tool.key ? colors.primary : colors.muted },
+              isLandscape && { fontSize: 9 },
+            ]}
+          >
+            {tool.label}
+          </Text>
+        </Pressable>
+      ))}
+    </View>
+  );
+
+  // ---- Orientation indicator ----
+  const renderOrientationBadge = () => (
+    <View
+      style={[
+        styles.orientationBadge,
+        { backgroundColor: `${colors.primary}30`, borderColor: colors.primary },
+      ]}
+    >
+      <IconSymbol
+        name={isLandscape ? "rectangle.landscape.rotate" : "rectangle.portrait.rotate"}
+        size={14}
+        color={colors.primary}
+      />
+      <Text style={[styles.orientationText, { color: colors.primary }]}>
+        {isLandscape ? "横向き" : "縦向き"}
+      </Text>
+    </View>
+  );
+
+  // ---- LANDSCAPE LAYOUT ----
+  if (isLandscape) {
+    return (
+      <ScreenContainer
+        containerClassName="bg-background"
+        edges={["left", "right"]}
+      >
+        <View style={styles.editorContainer}>
+          {/* Compact Top Bar for landscape */}
+          <View style={[styles.topBarLandscape, { borderBottomColor: colors.border }]}>
+            <Pressable
+              onPress={() => router.back()}
+              style={({ pressed }) => [styles.topBarBtn, pressed && { opacity: 0.6 }]}
+            >
+              <IconSymbol name="arrow.left" size={20} color={colors.foreground} />
+            </Pressable>
+            <Text
+              style={[styles.topBarTitleLandscape, { color: colors.foreground }]}
+              numberOfLines={1}
+            >
+              {project.title}
+            </Text>
+            {renderOrientationBadge()}
+            <Pressable
+              onPress={goToExport}
+              style={({ pressed }) => [
+                styles.exportBtn,
+                { backgroundColor: colors.primary },
+                pressed && { transform: [{ scale: 0.97 }], opacity: 0.9 },
+              ]}
+            >
+              <Text style={styles.exportBtnText}>エクスポート</Text>
+            </Pressable>
+          </View>
+
+          {/* Landscape main area: Video + Toolbar side by side */}
+          <View style={styles.landscapeBody}>
+            {/* Left: Video preview (takes most space) */}
+            <View style={styles.landscapeVideoArea}>
+              {renderVideoPreview()}
+              {renderTimeline()}
+            </View>
+
+            {/* Right: Tool panel or toolbar */}
+            {activePanel !== "none" ? (
+              <ScrollView
+                style={[
+                  styles.landscapePanelArea,
+                  { backgroundColor: colors.surface, borderLeftColor: colors.border },
+                ]}
+                showsVerticalScrollIndicator={false}
+              >
+                <View style={styles.panelContent}>
+                  {activePanel === "trim" && renderTrimPanel()}
+                  {activePanel === "filter" && renderFilterPanel()}
+                  {activePanel === "text" && renderTextPanel()}
+                  {activePanel === "music" && renderMusicPanel()}
+                  {activePanel === "speed" && renderSpeedPanel()}
+                </View>
+                {/* Inline toolbar at bottom of panel */}
+                {renderToolbar()}
+              </ScrollView>
+            ) : (
+              renderToolbar()
+            )}
+          </View>
+        </View>
+      </ScreenContainer>
+    );
+  }
+
+  // ---- PORTRAIT LAYOUT (default) ----
   return (
-    <ScreenContainer containerClassName="bg-background" edges={["top", "bottom", "left", "right"]}>
+    <ScreenContainer
+      containerClassName="bg-background"
+      edges={["top", "bottom", "left", "right"]}
+    >
       <View style={styles.editorContainer}>
         {/* Top Bar */}
         <View style={[styles.topBar, { borderBottomColor: colors.border }]}>
@@ -269,7 +899,10 @@ export default function EditorScreen() {
           >
             <IconSymbol name="arrow.left" size={22} color={colors.foreground} />
           </Pressable>
-          <Text style={[styles.topBarTitle, { color: colors.foreground }]} numberOfLines={1}>
+          <Text
+            style={[styles.topBarTitle, { color: colors.foreground }]}
+            numberOfLines={1}
+          >
             {project.title}
           </Text>
           <Pressable
@@ -285,460 +918,16 @@ export default function EditorScreen() {
         </View>
 
         {/* Video Preview */}
-        <View style={styles.previewContainer}>
-          <VideoView
-            style={styles.videoView}
-            player={player}
-            contentFit="contain"
-            nativeControls={false}
-          />
-          {/* Filter overlay */}
-          {filterOverlay && filterOverlay.color !== "transparent" && (
-            <View
-              style={[
-                styles.filterOverlay,
-                { backgroundColor: filterOverlay.color, opacity: filterIntensity / 100 },
-              ]}
-              pointerEvents="none"
-            />
-          )}
-          {/* Text overlay */}
-          {textInput.trim() !== "" && (
-            <View
-              style={[
-                styles.textOverlayContainer,
-                textPosition === "top" && { top: 20 },
-                textPosition === "center" && { top: "40%" },
-                textPosition === "bottom" && { bottom: 20 },
-              ]}
-              pointerEvents="none"
-            >
-              <Text
-                style={[
-                  styles.textOverlay,
-                  {
-                    color: textColor,
-                    fontSize: textSize,
-                  },
-                ]}
-              >
-                {textInput}
-              </Text>
-            </View>
-          )}
-          {/* Play/Pause overlay */}
-          <Pressable
-            onPress={togglePlay}
-            style={({ pressed }) => [styles.playOverlay, pressed && { opacity: 0.8 }]}
-          >
-            {!isPlaying && (
-              <View style={styles.playButton}>
-                <IconSymbol name="play.fill" size={36} color="#FFFFFF" />
-              </View>
-            )}
-          </Pressable>
-        </View>
+        {renderVideoPreview()}
 
         {/* Timeline */}
-        <View style={[styles.timeline, { backgroundColor: colors.surface }]}>
-          <View style={styles.timelineBar}>
-            <View
-              style={[
-                styles.timelineFill,
-                {
-                  backgroundColor: colors.primary,
-                  left: `${(trimStart / (project.duration || 1)) * 100}%`,
-                  right: `${100 - (trimEnd / (project.duration || 1)) * 100}%`,
-                },
-              ]}
-            />
-            <View
-              style={[
-                styles.timelineHandle,
-                {
-                  left: `${(trimStart / (project.duration || 1)) * 100}%`,
-                  backgroundColor: colors.primary,
-                },
-              ]}
-            />
-            <View
-              style={[
-                styles.timelineHandle,
-                {
-                  left: `${(trimEnd / (project.duration || 1)) * 100}%`,
-                  backgroundColor: colors.primary,
-                },
-              ]}
-            />
-          </View>
-          <View style={styles.timeLabels}>
-            <Text style={[styles.timeLabel, { color: colors.muted }]}>
-              {formatTime(trimStart)}
-            </Text>
-            <Text style={[styles.timeLabel, { color: colors.muted }]}>
-              {formatTime(trimEnd)}
-            </Text>
-          </View>
-        </View>
+        {renderTimeline()}
 
         {/* Tool Panel (animated) */}
-        <Animated.View style={panelAnimStyle}>
-          <View style={[styles.panelContent, { backgroundColor: colors.surface }]}>
-            {activePanel === "trim" && (
-              <View style={styles.panelInner}>
-                <Text style={[styles.panelTitle, { color: colors.foreground }]}>トリミング</Text>
-                <View style={styles.trimControls}>
-                  <View style={styles.trimField}>
-                    <Text style={[styles.trimLabel, { color: colors.muted }]}>開始</Text>
-                    <View style={[styles.trimInput, { borderColor: colors.border }]}>
-                      <Text style={[styles.trimValue, { color: colors.foreground }]}>
-                        {formatTime(trimStart)}
-                      </Text>
-                    </View>
-                    <View style={styles.trimBtns}>
-                      <Pressable
-                        onPress={() => setTrimStart(Math.max(0, trimStart - 0.5))}
-                        style={({ pressed }) => [
-                          styles.trimBtn,
-                          { backgroundColor: colors.border },
-                          pressed && { opacity: 0.6 },
-                        ]}
-                      >
-                        <Text style={{ color: colors.foreground, fontWeight: "600" }}>-</Text>
-                      </Pressable>
-                      <Pressable
-                        onPress={() => setTrimStart(Math.min(trimEnd - 0.5, trimStart + 0.5))}
-                        style={({ pressed }) => [
-                          styles.trimBtn,
-                          { backgroundColor: colors.border },
-                          pressed && { opacity: 0.6 },
-                        ]}
-                      >
-                        <Text style={{ color: colors.foreground, fontWeight: "600" }}>+</Text>
-                      </Pressable>
-                    </View>
-                  </View>
-                  <View style={styles.trimField}>
-                    <Text style={[styles.trimLabel, { color: colors.muted }]}>終了</Text>
-                    <View style={[styles.trimInput, { borderColor: colors.border }]}>
-                      <Text style={[styles.trimValue, { color: colors.foreground }]}>
-                        {formatTime(trimEnd)}
-                      </Text>
-                    </View>
-                    <View style={styles.trimBtns}>
-                      <Pressable
-                        onPress={() => setTrimEnd(Math.max(trimStart + 0.5, trimEnd - 0.5))}
-                        style={({ pressed }) => [
-                          styles.trimBtn,
-                          { backgroundColor: colors.border },
-                          pressed && { opacity: 0.6 },
-                        ]}
-                      >
-                        <Text style={{ color: colors.foreground, fontWeight: "600" }}>-</Text>
-                      </Pressable>
-                      <Pressable
-                        onPress={() =>
-                          setTrimEnd(Math.min(project.duration, trimEnd + 0.5))
-                        }
-                        style={({ pressed }) => [
-                          styles.trimBtn,
-                          { backgroundColor: colors.border },
-                          pressed && { opacity: 0.6 },
-                        ]}
-                      >
-                        <Text style={{ color: colors.foreground, fontWeight: "600" }}>+</Text>
-                      </Pressable>
-                    </View>
-                  </View>
-                </View>
-                <Pressable
-                  onPress={applyChanges}
-                  style={({ pressed }) => [
-                    styles.applyBtn,
-                    { backgroundColor: colors.primary },
-                    pressed && { opacity: 0.9, transform: [{ scale: 0.97 }] },
-                  ]}
-                >
-                  <Text style={styles.applyBtnText}>適用</Text>
-                </Pressable>
-              </View>
-            )}
-
-            {activePanel === "filter" && (
-              <View style={styles.panelInner}>
-                <Text style={[styles.panelTitle, { color: colors.foreground }]}>フィルター</Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterScroll}>
-                  {FILTERS.map((f) => (
-                    <Pressable
-                      key={f.id}
-                      onPress={() => {
-                        setSelectedFilter(f.id);
-                        if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                      }}
-                      style={({ pressed }) => [
-                        styles.filterItem,
-                        selectedFilter === f.id && { borderColor: colors.primary, borderWidth: 2 },
-                        pressed && { opacity: 0.7 },
-                      ]}
-                    >
-                      <View
-                        style={[
-                          styles.filterPreview,
-                          { backgroundColor: f.color === "transparent" ? colors.border : f.color },
-                        ]}
-                      />
-                      <Text
-                        style={[
-                          styles.filterName,
-                          { color: selectedFilter === f.id ? colors.primary : colors.muted },
-                        ]}
-                      >
-                        {f.name}
-                      </Text>
-                    </Pressable>
-                  ))}
-                </ScrollView>
-                <Pressable
-                  onPress={applyChanges}
-                  style={({ pressed }) => [
-                    styles.applyBtn,
-                    { backgroundColor: colors.primary },
-                    pressed && { opacity: 0.9, transform: [{ scale: 0.97 }] },
-                  ]}
-                >
-                  <Text style={styles.applyBtnText}>適用</Text>
-                </Pressable>
-              </View>
-            )}
-
-            {activePanel === "text" && (
-              <View style={styles.panelInner}>
-                <Text style={[styles.panelTitle, { color: colors.foreground }]}>テキスト</Text>
-                <TextInput
-                  value={textInput}
-                  onChangeText={setTextInput}
-                  placeholder="テキストを入力..."
-                  placeholderTextColor={colors.muted}
-                  style={[
-                    styles.textInputField,
-                    { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.background },
-                  ]}
-                  returnKeyType="done"
-                />
-                <Text style={[styles.subLabel, { color: colors.muted }]}>カラー</Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                  <View style={styles.colorRow}>
-                    {TEXT_COLORS.map((c) => (
-                      <Pressable
-                        key={c}
-                        onPress={() => setTextColor(c)}
-                        style={[
-                          styles.colorDot,
-                          { backgroundColor: c },
-                          textColor === c && { borderColor: colors.primary, borderWidth: 2 },
-                        ]}
-                      />
-                    ))}
-                  </View>
-                </ScrollView>
-                <Text style={[styles.subLabel, { color: colors.muted }]}>位置</Text>
-                <View style={styles.positionRow}>
-                  {(["top", "center", "bottom"] as const).map((pos) => (
-                    <Pressable
-                      key={pos}
-                      onPress={() => setTextPosition(pos)}
-                      style={({ pressed }) => [
-                        styles.positionBtn,
-                        { borderColor: textPosition === pos ? colors.primary : colors.border },
-                        pressed && { opacity: 0.7 },
-                      ]}
-                    >
-                      <Text
-                        style={{
-                          color: textPosition === pos ? colors.primary : colors.muted,
-                          fontWeight: "600",
-                          fontSize: 13,
-                        }}
-                      >
-                        {pos === "top" ? "上" : pos === "center" ? "中央" : "下"}
-                      </Text>
-                    </Pressable>
-                  ))}
-                </View>
-                <Pressable
-                  onPress={applyChanges}
-                  style={({ pressed }) => [
-                    styles.applyBtn,
-                    { backgroundColor: colors.primary },
-                    pressed && { opacity: 0.9, transform: [{ scale: 0.97 }] },
-                  ]}
-                >
-                  <Text style={styles.applyBtnText}>適用</Text>
-                </Pressable>
-              </View>
-            )}
-
-            {activePanel === "music" && (
-              <View style={styles.panelInner}>
-                <Text style={[styles.panelTitle, { color: colors.foreground }]}>BGM</Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
-                  {BGM_CATEGORIES.map((cat) => (
-                    <Pressable
-                      key={cat}
-                      onPress={() => setSelectedBgmCategory(cat)}
-                      style={({ pressed }) => [
-                        styles.categoryChip,
-                        {
-                          backgroundColor:
-                            selectedBgmCategory === cat ? colors.primary : colors.border,
-                        },
-                        pressed && { opacity: 0.7 },
-                      ]}
-                    >
-                      <Text
-                        style={{
-                          color: selectedBgmCategory === cat ? "#FFFFFF" : colors.muted,
-                          fontSize: 13,
-                          fontWeight: "600",
-                        }}
-                      >
-                        {cat}
-                      </Text>
-                    </Pressable>
-                  ))}
-                </ScrollView>
-                <ScrollView style={{ maxHeight: 140 }} showsVerticalScrollIndicator={false}>
-                  {filteredBgm.map((track) => (
-                    <Pressable
-                      key={track.id}
-                      onPress={() => {
-                        setSelectedBgm(selectedBgm === track.id ? null : track.id);
-                        if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                      }}
-                      style={({ pressed }) => [
-                        styles.bgmItem,
-                        {
-                          borderColor: selectedBgm === track.id ? colors.primary : colors.border,
-                          backgroundColor: selectedBgm === track.id ? `${colors.primary}15` : "transparent",
-                        },
-                        pressed && { opacity: 0.7 },
-                      ]}
-                    >
-                      <IconSymbol
-                        name="music.note"
-                        size={18}
-                        color={selectedBgm === track.id ? colors.primary : colors.muted}
-                      />
-                      <View style={{ flex: 1, marginLeft: 10 }}>
-                        <Text
-                          style={{
-                            color: selectedBgm === track.id ? colors.primary : colors.foreground,
-                            fontWeight: "600",
-                            fontSize: 14,
-                          }}
-                        >
-                          {track.title}
-                        </Text>
-                        <Text style={{ color: colors.muted, fontSize: 12 }}>
-                          {track.category} · {Math.floor(track.duration / 60)}:{String(track.duration % 60).padStart(2, "0")}
-                        </Text>
-                      </View>
-                      {selectedBgm === track.id && (
-                        <IconSymbol name="checkmark" size={18} color={colors.primary} />
-                      )}
-                    </Pressable>
-                  ))}
-                </ScrollView>
-                <Pressable
-                  onPress={applyChanges}
-                  style={({ pressed }) => [
-                    styles.applyBtn,
-                    { backgroundColor: colors.primary },
-                    pressed && { opacity: 0.9, transform: [{ scale: 0.97 }] },
-                  ]}
-                >
-                  <Text style={styles.applyBtnText}>適用</Text>
-                </Pressable>
-              </View>
-            )}
-
-            {activePanel === "speed" && (
-              <View style={styles.panelInner}>
-                <Text style={[styles.panelTitle, { color: colors.foreground }]}>再生速度</Text>
-                <Text style={[styles.speedValue, { color: colors.primary }]}>{speed.toFixed(2)}x</Text>
-                <View style={styles.speedPresets}>
-                  {SPEED_PRESETS.map((preset) => (
-                    <Pressable
-                      key={preset.value}
-                      onPress={() => {
-                        setSpeed(preset.value);
-                        if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                      }}
-                      style={({ pressed }) => [
-                        styles.speedBtn,
-                        {
-                          backgroundColor: speed === preset.value ? colors.primary : colors.border,
-                        },
-                        pressed && { opacity: 0.7 },
-                      ]}
-                    >
-                      <Text
-                        style={{
-                          color: speed === preset.value ? "#FFFFFF" : colors.muted,
-                          fontWeight: "700",
-                          fontSize: 14,
-                        }}
-                      >
-                        {preset.label}
-                      </Text>
-                    </Pressable>
-                  ))}
-                </View>
-                <Pressable
-                  onPress={applyChanges}
-                  style={({ pressed }) => [
-                    styles.applyBtn,
-                    { backgroundColor: colors.primary },
-                    pressed && { opacity: 0.9, transform: [{ scale: 0.97 }] },
-                  ]}
-                >
-                  <Text style={styles.applyBtnText}>適用</Text>
-                </Pressable>
-              </View>
-            )}
-          </View>
-        </Animated.View>
+        {renderToolPanel()}
 
         {/* Bottom Toolbar */}
-        <View style={[styles.toolbar, { backgroundColor: colors.surface, borderTopColor: colors.border }]}>
-          {([
-            { key: "trim" as PanelType, icon: "scissors" as const, label: "トリミング" },
-            { key: "filter" as PanelType, icon: "wand.and.stars" as const, label: "フィルター" },
-            { key: "text" as PanelType, icon: "textformat" as const, label: "テキスト" },
-            { key: "music" as PanelType, icon: "music.note" as const, label: "BGM" },
-            { key: "speed" as PanelType, icon: "speedometer" as const, label: "速度" },
-          ]).map((tool) => (
-            <Pressable
-              key={tool.key}
-              onPress={() => openPanel(tool.key)}
-              style={({ pressed }) => [styles.toolBtn, pressed && { opacity: 0.6 }]}
-            >
-              <IconSymbol
-                name={tool.icon}
-                size={24}
-                color={activePanel === tool.key ? colors.primary : colors.muted}
-              />
-              <Text
-                style={[
-                  styles.toolLabel,
-                  { color: activePanel === tool.key ? colors.primary : colors.muted },
-                ]}
-              >
-                {tool.label}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
+        {renderToolbar()}
       </View>
     </ScreenContainer>
   );
@@ -755,6 +944,7 @@ const styles = StyleSheet.create({
   editorContainer: {
     flex: 1,
   },
+  // ---- Top Bar (Portrait) ----
   topBar: {
     flexDirection: "row",
     alignItems: "center",
@@ -772,6 +962,20 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginHorizontal: 12,
   },
+  // ---- Top Bar (Landscape) ----
+  topBarLandscape: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderBottomWidth: 0.5,
+  },
+  topBarTitleLandscape: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: "600",
+    marginHorizontal: 10,
+  },
   exportBtn: {
     paddingHorizontal: 16,
     paddingVertical: 8,
@@ -782,10 +986,29 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     fontSize: 14,
   },
+  // ---- Orientation Badge ----
+  orientationBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginRight: 10,
+  },
+  orientationText: {
+    fontSize: 11,
+    fontWeight: "600",
+  },
+  // ---- Video Preview ----
   previewContainer: {
     flex: 1,
     backgroundColor: "#000000",
     position: "relative",
+  },
+  previewContainerLandscape: {
+    flex: 1,
   },
   videoView: {
     flex: 1,
@@ -818,6 +1041,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  // ---- Timeline ----
   timeline: {
     paddingHorizontal: 16,
     paddingVertical: 12,
@@ -851,6 +1075,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "500",
   },
+  // ---- Tool Panel ----
   panelContent: {
     flex: 1,
     borderTopLeftRadius: 16,
@@ -865,6 +1090,7 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     marginBottom: 12,
   },
+  // ---- Trim Panel ----
   trimControls: {
     flexDirection: "row",
     gap: 16,
@@ -898,6 +1124,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     alignItems: "center",
   },
+  // ---- Filter Panel ----
   filterScroll: {
     marginBottom: 12,
   },
@@ -919,6 +1146,7 @@ const styles = StyleSheet.create({
     marginTop: 4,
     fontWeight: "600",
   },
+  // ---- Text Panel ----
   textInputField: {
     borderWidth: 1,
     borderRadius: 10,
@@ -955,6 +1183,7 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     alignItems: "center",
   },
+  // ---- Music Panel ----
   categoryChip: {
     paddingHorizontal: 14,
     paddingVertical: 6,
@@ -969,6 +1198,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     marginBottom: 6,
   },
+  // ---- Speed Panel ----
   speedValue: {
     fontSize: 40,
     fontWeight: "800",
@@ -987,6 +1217,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderRadius: 12,
   },
+  // ---- Apply Button ----
   applyBtn: {
     paddingVertical: 12,
     borderRadius: 12,
@@ -998,6 +1229,7 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     fontSize: 16,
   },
+  // ---- Toolbar (Portrait) ----
   toolbar: {
     flexDirection: "row",
     justifyContent: "space-around",
@@ -1014,6 +1246,35 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "600",
   },
+  // ---- Toolbar (Landscape) ----
+  toolbarLandscape: {
+    flexDirection: "column",
+    justifyContent: "center",
+    alignItems: "center",
+    paddingVertical: 8,
+    paddingHorizontal: 6,
+    borderLeftWidth: 0.5,
+    gap: 4,
+  },
+  toolBtnLandscape: {
+    alignItems: "center",
+    gap: 2,
+    paddingVertical: 8,
+    paddingHorizontal: 6,
+  },
+  // ---- Landscape Layout ----
+  landscapeBody: {
+    flex: 1,
+    flexDirection: "row",
+  },
+  landscapeVideoArea: {
+    flex: 1,
+  },
+  landscapePanelArea: {
+    width: 280,
+    borderLeftWidth: 0.5,
+  },
+  // ---- Error / Empty State ----
   errorContainer: {
     flex: 1,
     alignItems: "center",

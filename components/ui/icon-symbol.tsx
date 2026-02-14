@@ -32,6 +32,8 @@ const MAPPING = {
   "wand.and.stars": "auto-fix-high",
   "photo.on.rectangle": "photo-library",
   "film": "movie",
+  "rectangle.landscape.rotate": "screen-rotation",
+  "rectangle.portrait.rotate": "screen-lock-rotation",
 } as IconMapping;
 
 export function IconSymbol({
