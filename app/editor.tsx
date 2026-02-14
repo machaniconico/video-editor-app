@@ -27,6 +27,7 @@ import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useColors } from "@/hooks/use-colors";
 import { useEditor } from "@/lib/editor-context";
 import { useOrientation } from "@/hooks/use-orientation";
+import { launchImageLibraryAsync } from "expo-image-picker";
 
 // Filter definitions
 const FILTERS = [
@@ -81,7 +82,18 @@ const BGM_TRACKS = [
 
 const BGM_CATEGORIES = ["すべて", "ポップ", "チル", "エピック", "アコースティック"];
 
-type PanelType = "none" | "trim" | "filter" | "text" | "music" | "speed";
+type PanelType = "none" | "trim" | "filter" | "text" | "music" | "speed" | "frame";
+
+// Frame layout definitions
+const FRAME_LAYOUTS: { id: import("@/lib/editor-context").FrameLayout; label: string; icon: string; slots: number }[] = [
+  { id: "single", label: "単一", icon: "■", slots: 1 },
+  { id: "split-h", label: "左右分割", icon: "◫", slots: 2 },
+  { id: "split-v", label: "上下分割", icon: "▤", slots: 2 },
+  { id: "grid-4", label: "4分割", icon: "▦", slots: 4 },
+  { id: "pip", label: "PiP", icon: "▣", slots: 2 },
+];
+
+const FONT_SIZES = [14, 18, 24, 32, 40, 56];
 
 export default function EditorScreen() {
   const colors = useColors();
@@ -104,6 +116,14 @@ export default function EditorScreen() {
   const [selectedBgmCategory, setSelectedBgmCategory] = useState("すべて");
   const [selectedBgm, setSelectedBgm] = useState<string | null>(null);
   const [bgmVolume, setBgmVolume] = useState(0.7);
+
+  // Multi-frame state
+  const [frameLayout, setFrameLayout] = useState<import("@/lib/editor-context").FrameLayout>(project?.frameLayout ?? "single");
+  const [frameSlots, setFrameSlots] = useState<import("@/lib/editor-context").FrameSlot[]>(project?.frameSlots ?? []);
+
+  // Multi-text overlay state
+  const [textOverlays, setTextOverlays] = useState<import("@/lib/editor-context").TextOverlay[]>(project?.textOverlays ?? []);
+  const [selectedTextId, setSelectedTextId] = useState<string | null>(null);
 
   const panelHeight = useSharedValue(0);
   const panelAnimStyle = useAnimatedStyle(() => ({
@@ -157,6 +177,9 @@ export default function EditorScreen() {
         setTextSize(project.textOverlay.fontSize);
       }
       setSpeed(project.speed);
+      setFrameLayout(project.frameLayout ?? "single");
+      setFrameSlots(project.frameSlots ?? []);
+      setTextOverlays(project.textOverlays ?? []);
     }
   }, [project?.id]);
 
@@ -236,6 +259,10 @@ export default function EditorScreen() {
       }
     }
 
+    updates.frameLayout = frameLayout;
+    updates.frameSlots = frameSlots;
+    updates.textOverlays = textOverlays;
+
     dispatch({ type: "UPDATE_CURRENT_PROJECT", payload: updates });
     setActivePanel("none");
     panelHeight.value = withTiming(0, { duration: 250 });
@@ -252,6 +279,9 @@ export default function EditorScreen() {
     textPosition,
     selectedBgm,
     bgmVolume,
+    frameLayout,
+    frameSlots,
+    textOverlays,
     dispatch,
     panelHeight,
   ]);
@@ -313,8 +343,47 @@ export default function EditorScreen() {
           pointerEvents="none"
         />
       )}
-      {/* Text overlay */}
-      {textInput.trim() !== "" && (
+      {/* Text overlays - free positioned */}
+      {textOverlays.map((overlay) => (
+        <Pressable
+          key={overlay.id}
+          onPress={() => {
+            setSelectedTextId(overlay.id);
+            setTextInput(overlay.text);
+            setTextColor(overlay.color);
+            setTextSize(overlay.fontSize);
+            setTextPosition(overlay.position);
+            if (activePanel !== "text") openPanel("text");
+          }}
+          style={[
+            styles.freeTextOverlay,
+            {
+              left: `${overlay.x}%`,
+              top: `${overlay.y}%`,
+              transform: [{ rotate: `${overlay.rotation}deg` }],
+            },
+            selectedTextId === overlay.id && {
+              borderWidth: 1,
+              borderColor: colors.primary,
+              borderStyle: "dashed" as any,
+            },
+          ]}
+        >
+          <Text
+            style={[
+              styles.textOverlay,
+              {
+                color: overlay.color,
+                fontSize: overlay.fontSize,
+              },
+            ]}
+          >
+            {overlay.text}
+          </Text>
+        </Pressable>
+      ))}
+      {/* Legacy single text overlay for backward compat */}
+      {textOverlays.length === 0 && textInput.trim() !== "" && (
         <View
           style={[
             styles.textOverlayContainer,
@@ -488,6 +557,7 @@ export default function EditorScreen() {
         {activePanel === "text" && renderTextPanel()}
         {activePanel === "music" && renderMusicPanel()}
         {activePanel === "speed" && renderSpeedPanel()}
+        {activePanel === "frame" && renderFramePanel()}
       </View>
     </Animated.View>
   );
@@ -727,77 +797,261 @@ export default function EditorScreen() {
     </View>
   );
 
+  const addTextOverlay = () => {
+    const newOverlay: import("@/lib/editor-context").TextOverlay = {
+      id: `txt_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      text: textInput.trim() || "テキスト",
+      fontSize: textSize,
+      color: textColor,
+      position: textPosition,
+      bold: false,
+      italic: false,
+      x: 50,
+      y: 50,
+      rotation: 0,
+    };
+    setTextOverlays([...textOverlays, newOverlay]);
+    setSelectedTextId(newOverlay.id);
+    setTextInput("");
+    if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  };
+
+  const updateSelectedText = (updates: Partial<import("@/lib/editor-context").TextOverlay>) => {
+    if (!selectedTextId) return;
+    setTextOverlays(textOverlays.map((o) =>
+      o.id === selectedTextId ? { ...o, ...updates } : o
+    ));
+  };
+
+  const deleteSelectedText = () => {
+    if (!selectedTextId) return;
+    setTextOverlays(textOverlays.filter((o) => o.id !== selectedTextId));
+    setSelectedTextId(null);
+    setTextInput("");
+    if (Platform.OS !== "web") Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+  };
+
+  const selectedOverlay = textOverlays.find((o) => o.id === selectedTextId);
+
   const renderTextPanel = () => (
-    <View style={styles.panelInner}>
-      <Text style={[styles.panelTitle, { color: colors.foreground }]}>テキスト</Text>
-      <TextInput
-        value={textInput}
-        onChangeText={setTextInput}
-        placeholder="テキストを入力..."
-        placeholderTextColor={colors.muted}
-        style={[
-          styles.textInputField,
-          {
-            color: colors.foreground,
-            borderColor: colors.border,
-            backgroundColor: colors.background,
-          },
-        ]}
-        returnKeyType="done"
-      />
-      <Text style={[styles.subLabel, { color: colors.muted }]}>カラー</Text>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-        <View style={styles.colorRow}>
-          {TEXT_COLORS.map((c) => (
-            <Pressable
-              key={c}
-              onPress={() => setTextColor(c)}
-              style={[
-                styles.colorDot,
-                { backgroundColor: c },
-                textColor === c && { borderColor: colors.primary, borderWidth: 2 },
-              ]}
-            />
-          ))}
-        </View>
-      </ScrollView>
-      <Text style={[styles.subLabel, { color: colors.muted }]}>位置</Text>
-      <View style={styles.positionRow}>
-        {(["top", "center", "bottom"] as const).map((pos) => (
+    <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+      <View style={styles.panelInner}>
+        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+          <Text style={[styles.panelTitle, { color: colors.foreground, marginBottom: 0 }]}>テキスト</Text>
           <Pressable
-            key={pos}
-            onPress={() => setTextPosition(pos)}
+            onPress={addTextOverlay}
             style={({ pressed }) => [
-              styles.positionBtn,
-              {
-                borderColor: textPosition === pos ? colors.primary : colors.border,
-              },
-              pressed && { opacity: 0.7 },
+              { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: colors.primary },
+              pressed && { opacity: 0.8 },
             ]}
           >
-            <Text
-              style={{
-                color: textPosition === pos ? colors.primary : colors.muted,
-                fontWeight: "600",
-                fontSize: 13,
-              }}
-            >
-              {pos === "top" ? "上" : pos === "center" ? "中央" : "下"}
-            </Text>
+            <IconSymbol name="plus" size={16} color="#FFFFFF" />
+            <Text style={{ color: "#FFFFFF", fontWeight: "600", fontSize: 13 }}>追加</Text>
           </Pressable>
-        ))}
+        </View>
+
+        {/* Text list */}
+        {textOverlays.length > 0 && (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
+            <View style={{ flexDirection: "row", gap: 6 }}>
+              {textOverlays.map((o) => (
+                <Pressable
+                  key={o.id}
+                  onPress={() => {
+                    setSelectedTextId(o.id);
+                    setTextInput(o.text);
+                    setTextColor(o.color);
+                    setTextSize(o.fontSize);
+                    setTextPosition(o.position);
+                  }}
+                  style={({ pressed }) => [
+                    {
+                      paddingHorizontal: 12,
+                      paddingVertical: 6,
+                      borderRadius: 8,
+                      borderWidth: 1.5,
+                      borderColor: selectedTextId === o.id ? colors.primary : colors.border,
+                      backgroundColor: selectedTextId === o.id ? `${colors.primary}15` : "transparent",
+                    },
+                    pressed && { opacity: 0.7 },
+                  ]}
+                >
+                  <Text style={{ color: selectedTextId === o.id ? colors.primary : colors.foreground, fontSize: 13, fontWeight: "600" }} numberOfLines={1}>
+                    {o.text.slice(0, 10)}{o.text.length > 10 ? "..." : ""}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          </ScrollView>
+        )}
+
+        {/* Edit selected or new text */}
+        <TextInput
+          value={selectedOverlay ? selectedOverlay.text : textInput}
+          onChangeText={(val) => {
+            if (selectedOverlay) {
+              updateSelectedText({ text: val });
+            } else {
+              setTextInput(val);
+            }
+          }}
+          placeholder="テキストを入力..."
+          placeholderTextColor={colors.muted}
+          style={[
+            styles.textInputField,
+            {
+              color: colors.foreground,
+              borderColor: colors.border,
+              backgroundColor: colors.background,
+            },
+          ]}
+          returnKeyType="done"
+        />
+
+        {/* Font size */}
+        <Text style={[styles.subLabel, { color: colors.muted }]}>サイズ</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            {FONT_SIZES.map((size) => (
+              <Pressable
+                key={size}
+                onPress={() => {
+                  setTextSize(size);
+                  if (selectedOverlay) updateSelectedText({ fontSize: size });
+                }}
+                style={({ pressed }) => [
+                  {
+                    width: 40,
+                    height: 40,
+                    borderRadius: 8,
+                    alignItems: "center" as const,
+                    justifyContent: "center" as const,
+                    backgroundColor: (selectedOverlay?.fontSize ?? textSize) === size ? colors.primary : colors.border,
+                  },
+                  pressed && { opacity: 0.7 },
+                ]}
+              >
+                <Text style={{ color: (selectedOverlay?.fontSize ?? textSize) === size ? "#FFFFFF" : colors.muted, fontWeight: "700", fontSize: 13 }}>
+                  {size}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        </ScrollView>
+
+        {/* Color */}
+        <Text style={[styles.subLabel, { color: colors.muted }]}>カラー</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          <View style={styles.colorRow}>
+            {TEXT_COLORS.map((c) => (
+              <Pressable
+                key={c}
+                onPress={() => {
+                  setTextColor(c);
+                  if (selectedOverlay) updateSelectedText({ color: c });
+                }}
+                style={[
+                  styles.colorDot,
+                  { backgroundColor: c },
+                  (selectedOverlay?.color ?? textColor) === c && { borderColor: colors.primary, borderWidth: 2 },
+                ]}
+              />
+            ))}
+          </View>
+        </ScrollView>
+
+        {/* Position controls for selected overlay */}
+        {selectedOverlay && (
+          <>
+            <Text style={[styles.subLabel, { color: colors.muted }]}>位置調整</Text>
+            <View style={{ flexDirection: "row", gap: 8, marginBottom: 10 }}>
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: colors.muted, fontSize: 11, marginBottom: 4 }}>X: {Math.round(selectedOverlay.x)}%</Text>
+                <View style={{ flexDirection: "row", gap: 4 }}>
+                  <Pressable
+                    onPress={() => updateSelectedText({ x: Math.max(0, selectedOverlay.x - 5) })}
+                    style={({ pressed }) => [styles.trimBtn, { backgroundColor: colors.border, flex: 1 }, pressed && { opacity: 0.6 }]}
+                  >
+                    <Text style={{ color: colors.foreground, fontWeight: "700", fontSize: 12 }}>-5</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => updateSelectedText({ x: Math.min(100, selectedOverlay.x + 5) })}
+                    style={({ pressed }) => [styles.trimBtn, { backgroundColor: colors.border, flex: 1 }, pressed && { opacity: 0.6 }]}
+                  >
+                    <Text style={{ color: colors.foreground, fontWeight: "700", fontSize: 12 }}>+5</Text>
+                  </Pressable>
+                </View>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: colors.muted, fontSize: 11, marginBottom: 4 }}>Y: {Math.round(selectedOverlay.y)}%</Text>
+                <View style={{ flexDirection: "row", gap: 4 }}>
+                  <Pressable
+                    onPress={() => updateSelectedText({ y: Math.max(0, selectedOverlay.y - 5) })}
+                    style={({ pressed }) => [styles.trimBtn, { backgroundColor: colors.border, flex: 1 }, pressed && { opacity: 0.6 }]}
+                  >
+                    <Text style={{ color: colors.foreground, fontWeight: "700", fontSize: 12 }}>-5</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => updateSelectedText({ y: Math.min(100, selectedOverlay.y + 5) })}
+                    style={({ pressed }) => [styles.trimBtn, { backgroundColor: colors.border, flex: 1 }, pressed && { opacity: 0.6 }]}
+                  >
+                    <Text style={{ color: colors.foreground, fontWeight: "700", fontSize: 12 }}>+5</Text>
+                  </Pressable>
+                </View>
+              </View>
+            </View>
+
+            {/* Rotation */}
+            <Text style={[styles.subLabel, { color: colors.muted }]}>回転: {selectedOverlay.rotation}°</Text>
+            <View style={{ flexDirection: "row", gap: 6, marginBottom: 10 }}>
+              {[-45, -15, 0, 15, 45].map((deg) => (
+                <Pressable
+                  key={deg}
+                  onPress={() => updateSelectedText({ rotation: deg })}
+                  style={({ pressed }) => [
+                    {
+                      flex: 1,
+                      paddingVertical: 7,
+                      borderRadius: 8,
+                      alignItems: "center" as const,
+                      backgroundColor: selectedOverlay.rotation === deg ? colors.primary : colors.border,
+                    },
+                    pressed && { opacity: 0.7 },
+                  ]}
+                >
+                  <Text style={{ color: selectedOverlay.rotation === deg ? "#FFFFFF" : colors.muted, fontWeight: "700", fontSize: 12 }}>
+                    {deg}°
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+
+            {/* Delete button */}
+            <Pressable
+              onPress={deleteSelectedText}
+              style={({ pressed }) => [
+                { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 10, borderRadius: 10, backgroundColor: `${colors.error}15`, borderWidth: 1, borderColor: colors.error, marginBottom: 8 },
+                pressed && { opacity: 0.7 },
+              ]}
+            >
+              <IconSymbol name="trash" size={16} color={colors.error} />
+              <Text style={{ color: colors.error, fontWeight: "600", fontSize: 14 }}>このテキストを削除</Text>
+            </Pressable>
+          </>
+        )}
+
+        <Pressable
+          onPress={applyChanges}
+          style={({ pressed }) => [
+            styles.applyBtn,
+            { backgroundColor: colors.primary },
+            pressed && { opacity: 0.9, transform: [{ scale: 0.97 }] },
+          ]}
+        >
+          <Text style={styles.applyBtnText}>適用</Text>
+        </Pressable>
       </View>
-      <Pressable
-        onPress={applyChanges}
-        style={({ pressed }) => [
-          styles.applyBtn,
-          { backgroundColor: colors.primary },
-          pressed && { opacity: 0.9, transform: [{ scale: 0.97 }] },
-        ]}
-      >
-        <Text style={styles.applyBtnText}>適用</Text>
-      </Pressable>
-    </View>
+    </ScrollView>
   );
 
   const renderMusicPanel = () => (
@@ -1027,6 +1281,211 @@ export default function EditorScreen() {
     );
   };
 
+  const addFrameSlot = () => {
+    launchImageLibraryAsync({
+      mediaTypes: ["videos"],
+      quality: 0.8,
+    }).then((result) => {
+      if (!result.canceled && result.assets[0]) {
+        const asset = result.assets[0];
+        const newSlot: import("@/lib/editor-context").FrameSlot = {
+          id: `frame_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          videoUri: asset.uri,
+          thumbnailUri: null,
+          duration: (asset.duration ?? 0) / 1000,
+        };
+        setFrameSlots([...frameSlots, newSlot]);
+        if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      }
+    });
+  };
+
+  const removeFrameSlot = (slotId: string) => {
+    setFrameSlots(frameSlots.filter((s) => s.id !== slotId));
+    if (Platform.OS !== "web") Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+  };
+
+  const renderFramePanel = () => {
+    const currentLayoutInfo = FRAME_LAYOUTS.find((l) => l.id === frameLayout);
+    return (
+      <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+        <View style={styles.panelInner}>
+          <Text style={[styles.panelTitle, { color: colors.foreground }]}>マルチフレーム</Text>
+
+          {/* Layout selection */}
+          <Text style={[styles.subLabel, { color: colors.muted }]}>レイアウト</Text>
+          <View style={{ flexDirection: "row", gap: 8, marginBottom: 14 }}>
+            {FRAME_LAYOUTS.map((layout) => (
+              <Pressable
+                key={layout.id}
+                onPress={() => {
+                  setFrameLayout(layout.id);
+                  if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                }}
+                style={({ pressed }) => [
+                  {
+                    flex: 1,
+                    paddingVertical: 10,
+                    borderRadius: 10,
+                    alignItems: "center" as const,
+                    borderWidth: 1.5,
+                    borderColor: frameLayout === layout.id ? colors.primary : colors.border,
+                    backgroundColor: frameLayout === layout.id ? `${colors.primary}15` : "transparent",
+                  },
+                  pressed && { opacity: 0.7 },
+                ]}
+              >
+                <Text style={{ fontSize: 20, marginBottom: 2 }}>{layout.icon}</Text>
+                <Text style={{ color: frameLayout === layout.id ? colors.primary : colors.muted, fontSize: 11, fontWeight: "600" }}>
+                  {layout.label}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+
+          {/* Frame slots */}
+          {frameLayout !== "single" && (
+            <>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <Text style={[styles.subLabel, { color: colors.muted, marginBottom: 0 }]}>
+                  動画スロット ({frameSlots.length}/{currentLayoutInfo?.slots ?? 2})
+                </Text>
+                {frameSlots.length < (currentLayoutInfo?.slots ?? 2) && (
+                  <Pressable
+                    onPress={addFrameSlot}
+                    style={({ pressed }) => [
+                      { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: colors.primary },
+                      pressed && { opacity: 0.8 },
+                    ]}
+                  >
+                    <IconSymbol name="plus" size={14} color="#FFFFFF" />
+                    <Text style={{ color: "#FFFFFF", fontWeight: "600", fontSize: 12 }}>動画追加</Text>
+                  </Pressable>
+                )}
+              </View>
+              {frameSlots.map((slot, idx) => (
+                <View
+                  key={slot.id}
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    padding: 10,
+                    borderRadius: 10,
+                    borderWidth: 1,
+                    borderColor: colors.border,
+                    marginBottom: 6,
+                    backgroundColor: `${colors.surface}80`,
+                  }}
+                >
+                  <View style={{ width: 36, height: 36, borderRadius: 8, backgroundColor: colors.border, alignItems: "center", justifyContent: "center", marginRight: 10 }}>
+                    <IconSymbol name="film" size={18} color={colors.muted} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: colors.foreground, fontWeight: "600", fontSize: 13 }}>
+                      スロット {idx + 1}
+                    </Text>
+                    <Text style={{ color: colors.muted, fontSize: 11 }}>
+                      {slot.duration > 0 ? formatTime(slot.duration) : "読み込み中..."}
+                    </Text>
+                  </View>
+                  <Pressable
+                    onPress={() => removeFrameSlot(slot.id)}
+                    style={({ pressed }) => [{ padding: 6 }, pressed && { opacity: 0.6 }]}
+                  >
+                    <IconSymbol name="xmark" size={18} color={colors.error} />
+                  </Pressable>
+                </View>
+              ))}
+              {frameSlots.length === 0 && (
+                <View style={{ alignItems: "center", paddingVertical: 20 }}>
+                  <IconSymbol name="video.badge.plus" size={32} color={colors.muted} />
+                  <Text style={{ color: colors.muted, fontSize: 13, marginTop: 8 }}>動画を追加してマルチフレームを作成</Text>
+                </View>
+              )}
+            </>
+          )}
+
+          {/* Layout preview */}
+          <Text style={[styles.subLabel, { color: colors.muted, marginTop: 8 }]}>プレビュー</Text>
+          <View style={{
+            width: "100%",
+            aspectRatio: 16 / 9,
+            borderRadius: 10,
+            borderWidth: 1,
+            borderColor: colors.border,
+            overflow: "hidden",
+            marginBottom: 12,
+          }}>
+            {frameLayout === "single" && (
+              <View style={{ flex: 1, backgroundColor: `${colors.primary}20`, alignItems: "center", justifyContent: "center" }}>
+                <Text style={{ color: colors.primary, fontWeight: "700" }}>メイン</Text>
+              </View>
+            )}
+            {frameLayout === "split-h" && (
+              <View style={{ flex: 1, flexDirection: "row" }}>
+                <View style={{ flex: 1, backgroundColor: `${colors.primary}20`, alignItems: "center", justifyContent: "center", borderRightWidth: 1, borderColor: colors.border }}>
+                  <Text style={{ color: colors.primary, fontWeight: "600", fontSize: 12 }}>1</Text>
+                </View>
+                <View style={{ flex: 1, backgroundColor: `${colors.warning}20`, alignItems: "center", justifyContent: "center" }}>
+                  <Text style={{ color: colors.warning, fontWeight: "600", fontSize: 12 }}>2</Text>
+                </View>
+              </View>
+            )}
+            {frameLayout === "split-v" && (
+              <View style={{ flex: 1 }}>
+                <View style={{ flex: 1, backgroundColor: `${colors.primary}20`, alignItems: "center", justifyContent: "center", borderBottomWidth: 1, borderColor: colors.border }}>
+                  <Text style={{ color: colors.primary, fontWeight: "600", fontSize: 12 }}>1</Text>
+                </View>
+                <View style={{ flex: 1, backgroundColor: `${colors.warning}20`, alignItems: "center", justifyContent: "center" }}>
+                  <Text style={{ color: colors.warning, fontWeight: "600", fontSize: 12 }}>2</Text>
+                </View>
+              </View>
+            )}
+            {frameLayout === "grid-4" && (
+              <View style={{ flex: 1 }}>
+                <View style={{ flex: 1, flexDirection: "row" }}>
+                  <View style={{ flex: 1, backgroundColor: `${colors.primary}20`, alignItems: "center", justifyContent: "center", borderRightWidth: 1, borderBottomWidth: 1, borderColor: colors.border }}>
+                    <Text style={{ color: colors.primary, fontWeight: "600", fontSize: 12 }}>1</Text>
+                  </View>
+                  <View style={{ flex: 1, backgroundColor: `${colors.warning}20`, alignItems: "center", justifyContent: "center", borderBottomWidth: 1, borderColor: colors.border }}>
+                    <Text style={{ color: colors.warning, fontWeight: "600", fontSize: 12 }}>2</Text>
+                  </View>
+                </View>
+                <View style={{ flex: 1, flexDirection: "row" }}>
+                  <View style={{ flex: 1, backgroundColor: `${colors.success}20`, alignItems: "center", justifyContent: "center", borderRightWidth: 1, borderColor: colors.border }}>
+                    <Text style={{ color: colors.success, fontWeight: "600", fontSize: 12 }}>3</Text>
+                  </View>
+                  <View style={{ flex: 1, backgroundColor: `${colors.error}20`, alignItems: "center", justifyContent: "center" }}>
+                    <Text style={{ color: colors.error, fontWeight: "600", fontSize: 12 }}>4</Text>
+                  </View>
+                </View>
+              </View>
+            )}
+            {frameLayout === "pip" && (
+              <View style={{ flex: 1, backgroundColor: `${colors.primary}20`, alignItems: "center", justifyContent: "center" }}>
+                <Text style={{ color: colors.primary, fontWeight: "600", fontSize: 12 }}>メイン</Text>
+                <View style={{ position: "absolute", bottom: 8, right: 8, width: "30%", aspectRatio: 16 / 9, backgroundColor: `${colors.warning}40`, borderRadius: 6, borderWidth: 1, borderColor: colors.warning, alignItems: "center", justifyContent: "center" }}>
+                  <Text style={{ color: colors.warning, fontWeight: "600", fontSize: 10 }}>PiP</Text>
+                </View>
+              </View>
+            )}
+          </View>
+
+          <Pressable
+            onPress={applyChanges}
+            style={({ pressed }) => [
+              styles.applyBtn,
+              { backgroundColor: colors.primary },
+              pressed && { opacity: 0.9, transform: [{ scale: 0.97 }] },
+            ]}
+          >
+            <Text style={styles.applyBtnText}>適用</Text>
+          </Pressable>
+        </View>
+      </ScrollView>
+    );
+  };
+
   const renderToolbar = () => (
     <View
       style={[
@@ -1044,6 +1503,7 @@ export default function EditorScreen() {
         { key: "text" as PanelType, icon: "textformat" as const, label: "テキスト" },
         { key: "music" as PanelType, icon: "music.note" as const, label: "BGM" },
         { key: "speed" as PanelType, icon: "speedometer" as const, label: "速度" },
+        { key: "frame" as PanelType, icon: "rectangle.on.rectangle" as const, label: "フレーム" },
       ]).map((tool) => (
         <Pressable
           key={tool.key}
@@ -1149,6 +1609,7 @@ export default function EditorScreen() {
                   {activePanel === "text" && renderTextPanel()}
                   {activePanel === "music" && renderMusicPanel()}
                   {activePanel === "speed" && renderSpeedPanel()}
+                  {activePanel === "frame" && renderFramePanel()}
                 </View>
                 {/* Inline toolbar at bottom of panel */}
                 {renderToolbar()}
@@ -1299,6 +1760,11 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     alignItems: "center",
+  },
+  freeTextOverlay: {
+    position: "absolute",
+    padding: 4,
+    borderRadius: 4,
   },
   textOverlay: {
     fontWeight: "700",

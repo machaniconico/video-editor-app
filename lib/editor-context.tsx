@@ -3,13 +3,27 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 
 // Types
 export interface TextOverlay {
+  id: string;
   text: string;
   fontSize: number;
   color: string;
   position: "top" | "center" | "bottom";
   bold: boolean;
   italic: boolean;
+  // Free positioning (percentage-based, 0-100)
+  x: number;
+  y: number;
+  rotation: number;
 }
+
+export interface FrameSlot {
+  id: string;
+  videoUri: string;
+  thumbnailUri: string | null;
+  duration: number;
+}
+
+export type FrameLayout = "single" | "split-h" | "split-v" | "grid-4" | "pip";
 
 export interface VideoFilter {
   id: string;
@@ -38,8 +52,11 @@ export interface VideoProject {
   trimEnd: number;
   filter: VideoFilter | null;
   textOverlay: TextOverlay | null;
+  textOverlays: TextOverlay[];
   bgmTrack: BGMTrack | null;
   speed: number;
+  frameLayout: FrameLayout;
+  frameSlots: FrameSlot[];
 }
 
 interface EditorState {
@@ -149,8 +166,11 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
         trimEnd: duration,
         filter: null,
         textOverlay: null,
+        textOverlays: [],
         bgmTrack: null,
         speed: 1.0,
+        frameLayout: "single",
+        frameSlots: [],
       };
       dispatch({ type: "ADD_PROJECT", payload: project });
       dispatch({ type: "SET_CURRENT_PROJECT", payload: project });

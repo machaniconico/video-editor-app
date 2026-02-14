@@ -34,6 +34,19 @@ const MAPPING = {
   "film": "movie",
   "rectangle.landscape.rotate": "screen-rotation",
   "rectangle.portrait.rotate": "screen-lock-rotation",
+  "rectangle.split.2x1": "view-column",
+  "rectangle.split.1x2": "view-stream",
+  "rectangle.split.2x2": "grid-view",
+  "pip": "picture-in-picture",
+  "text.cursor": "text-format",
+  "arrow.up.and.down.and.arrow.left.and.right": "open-with",
+  "textformat.size": "format-size",
+  "rotate.right": "rotate-right",
+  "plus.circle": "add-circle",
+  "minus.circle": "remove-circle",
+  "trash": "delete-outline",
+  "rectangle.on.rectangle": "filter-none",
+  "video.badge.plus": "video-library",
 } as IconMapping;
 
 export function IconSymbol({
