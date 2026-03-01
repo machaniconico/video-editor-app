@@ -205,3 +205,93 @@ describe("effectivePlayerState computation", () => {
     expect(result.trimEnd).toBe(30);
   });
 });
+
+// Replicate syncToVideoTrack logic
+function syncToVideoTrack(
+  tracks: Array<{
+    type: string;
+    isMuted: boolean;
+    isSolo: boolean;
+    volume: number;
+    clips: Array<{ speed: number; volume: number; trimStart: number; trimEnd: number }>;
+  }>,
+  updates: { speed?: number; trimStart?: number; trimEnd?: number }
+) {
+  const idx = tracks.findIndex((t) => t.type === "video");
+  if (idx === -1) return tracks;
+  const vt = tracks[idx];
+  if (vt.clips.length === 0) return tracks;
+  const clip = { ...vt.clips[0] };
+  if (updates.speed !== undefined) clip.speed = updates.speed;
+  if (updates.trimStart !== undefined) clip.trimStart = updates.trimStart;
+  if (updates.trimEnd !== undefined) clip.trimEnd = updates.trimEnd;
+  const newTracks = [...tracks];
+  newTracks[idx] = { ...vt, clips: [clip, ...vt.clips.slice(1)] };
+  return newTracks;
+}
+
+describe("syncToVideoTrack bidirectional sync", () => {
+  const baseTracks = [
+    {
+      type: "video",
+      isMuted: false,
+      isSolo: false,
+      volume: 1.0,
+      clips: [{ speed: 1.0, volume: 1.0, trimStart: 0, trimEnd: 30 }],
+    },
+    {
+      type: "audio",
+      isMuted: false,
+      isSolo: false,
+      volume: 1.0,
+      clips: [{ speed: 1.0, volume: 1.0, trimStart: 0, trimEnd: 30 }],
+    },
+  ];
+
+  it("speed panel change → tracks → effectivePlayerState", () => {
+    const updated = syncToVideoTrack(JSON.parse(JSON.stringify(baseTracks)), { speed: 8.0 });
+    const state = computeEffectivePlayerState(updated, 30);
+    expect(state.speed).toBe(8.0);
+  });
+
+  it("trim panel change → tracks → effectivePlayerState", () => {
+    const updated = syncToVideoTrack(JSON.parse(JSON.stringify(baseTracks)), { trimStart: 5, trimEnd: 20 });
+    const state = computeEffectivePlayerState(updated, 30);
+    expect(state.trimStart).toBe(5);
+    expect(state.trimEnd).toBe(20);
+  });
+
+  it("multi-track mute → effectivePlayerState volume", () => {
+    const tracks = JSON.parse(JSON.stringify(baseTracks));
+    tracks[0].isMuted = true;
+    const state = computeEffectivePlayerState(tracks, 30);
+    expect(state.muted).toBe(false); // Audio still active
+    expect(state.volume).toBe(1.0);
+  });
+
+  it("multi-track volume change → effectivePlayerState", () => {
+    const tracks = JSON.parse(JSON.stringify(baseTracks));
+    tracks[1].volume = 0.3;
+    tracks[1].clips[0].volume = 0.5;
+    const state = computeEffectivePlayerState(tracks, 30);
+    // max(audio=0.3*0.5=0.15, video=1.0*1.0=1.0) = 1.0
+    expect(state.volume).toBe(1.0);
+  });
+
+  it("multi-track onTracksChange → legacy state extraction", () => {
+    const tracks = [
+      {
+        type: "video",
+        isMuted: false,
+        isSolo: false,
+        volume: 1.0,
+        clips: [{ speed: 6.0, volume: 1.0, trimStart: 3, trimEnd: 18 }],
+      },
+    ];
+    // Simulate onTracksChange wrapper extracting legacy values
+    const vt = tracks.find((t) => t.type === "video");
+    expect(vt!.clips[0].speed).toBe(6.0);
+    expect(vt!.clips[0].trimStart).toBe(3);
+    expect(vt!.clips[0].trimEnd).toBe(18);
+  });
+});

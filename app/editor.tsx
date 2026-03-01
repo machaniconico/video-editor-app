@@ -135,6 +135,23 @@ export default function EditorScreen() {
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
   const [isFullscreenPreview, setIsFullscreenPreview] = useState(false);
 
+  // Helper: sync legacy state changes to the first video track clip in tracks
+  const syncToVideoTrack = useCallback((updates: { speed?: number; trimStart?: number; trimEnd?: number }) => {
+    setTracks((prev) => {
+      const videoTrackIdx = prev.findIndex((t) => t.type === "video");
+      if (videoTrackIdx === -1) return prev;
+      const vt = prev[videoTrackIdx];
+      if (vt.clips.length === 0) return prev;
+      const clip = { ...vt.clips[0] };
+      if (updates.speed !== undefined) clip.speed = updates.speed;
+      if (updates.trimStart !== undefined) clip.trimStart = updates.trimStart;
+      if (updates.trimEnd !== undefined) clip.trimEnd = updates.trimEnd;
+      const newTracks = [...prev];
+      newTracks[videoTrackIdx] = { ...vt, clips: [clip, ...vt.clips.slice(1)] };
+      return newTracks;
+    });
+  }, []);
+
   const panelHeight = useSharedValue(0);
   const panelAnimStyle = useAnimatedStyle(() => ({
     height: panelHeight.value,
@@ -166,7 +183,41 @@ export default function EditorScreen() {
   // Video player
   const player = useVideoPlayer(project?.videoUri ?? "", (p) => {
     p.loop = true;
+    // Initial settings will be applied by useEffect after mount
   });
+
+  // Apply all effective player state on mount and whenever player changes
+  useEffect(() => {
+    if (!player) return;
+    const applyState = () => {
+      try {
+        player.playbackRate = effectivePlayerState.speed;
+        player.volume = effectivePlayerState.volume;
+        player.muted = effectivePlayerState.muted;
+        if (effectivePlayerState.trimStart > 0) {
+          player.currentTime = effectivePlayerState.trimStart;
+        }
+      } catch (e) { /* ignore */ }
+      // Also apply to Web DOM video element
+      if (Platform.OS === "web") {
+        try {
+          const videos = document.querySelectorAll("video");
+          if (videos.length > 0) {
+            const videoEl = videos[0];
+            videoEl.playbackRate = effectivePlayerState.speed;
+            videoEl.volume = effectivePlayerState.volume;
+            videoEl.muted = effectivePlayerState.muted;
+            if (effectivePlayerState.trimStart > 0) {
+              videoEl.currentTime = effectivePlayerState.trimStart;
+            }
+          }
+        } catch (e) { /* ignore */ }
+      }
+    };
+    // Delay slightly to ensure video element is mounted on Web
+    const timer = setTimeout(applyState, 300);
+    return () => clearTimeout(timer);
+  }, [player]);
 
   const { isPlaying } = useEvent(player, "playingChange", {
     isPlaying: player.playing,
@@ -258,57 +309,82 @@ export default function EditorScreen() {
     };
   }, [tracks, project?.duration]);
 
+  // Helper: find the underlying HTML5 <video> element on Web for direct DOM access
+  const getWebVideoElement = useCallback((): HTMLVideoElement | null => {
+    if (Platform.OS !== "web") return null;
+    try {
+      const videos = document.querySelectorAll("video");
+      return videos.length > 0 ? videos[0] : null;
+    } catch {
+      return null;
+    }
+  }, []);
+
   // Apply speed changes to player
   useEffect(() => {
-    if (player && effectivePlayerState.speed > 0) {
-      try {
-        player.playbackRate = effectivePlayerState.speed;
-      } catch (e) {
-        // playbackRate may not be supported on all platforms
-      }
+    if (!player || effectivePlayerState.speed <= 0) return;
+    try {
+      player.playbackRate = effectivePlayerState.speed;
+    } catch (e) { /* ignore */ }
+    // Also apply directly to DOM video element on Web
+    const videoEl = getWebVideoElement();
+    if (videoEl) {
+      videoEl.playbackRate = effectivePlayerState.speed;
     }
-  }, [player, effectivePlayerState.speed]);
+  }, [player, effectivePlayerState.speed, getWebVideoElement]);
 
   // Apply volume changes to player
   useEffect(() => {
-    if (player) {
-      try {
-        player.volume = effectivePlayerState.volume;
-        player.muted = effectivePlayerState.muted;
-      } catch (e) {
-        // volume/muted may not be supported on all platforms
-      }
+    if (!player) return;
+    try {
+      player.volume = effectivePlayerState.volume;
+      player.muted = effectivePlayerState.muted;
+    } catch (e) { /* ignore */ }
+    // Also apply directly to DOM video element on Web
+    const videoEl = getWebVideoElement();
+    if (videoEl) {
+      videoEl.volume = effectivePlayerState.volume;
+      videoEl.muted = effectivePlayerState.muted;
     }
-  }, [player, effectivePlayerState.volume, effectivePlayerState.muted]);
+  }, [player, effectivePlayerState.volume, effectivePlayerState.muted, getWebVideoElement]);
 
   // Apply trim changes: seek to trimStart when trim changes
   useEffect(() => {
-    if (player && effectivePlayerState.trimStart >= 0) {
-      try {
-        player.currentTime = effectivePlayerState.trimStart;
-      } catch (e) {
-        // currentTime may not be supported on all platforms
-      }
+    if (!player || effectivePlayerState.trimStart < 0) return;
+    try {
+      player.currentTime = effectivePlayerState.trimStart;
+    } catch (e) { /* ignore */ }
+    // Also apply directly to DOM video element on Web
+    const videoEl = getWebVideoElement();
+    if (videoEl) {
+      videoEl.currentTime = effectivePlayerState.trimStart;
     }
-  }, [player, effectivePlayerState.trimStart]);
+  }, [player, effectivePlayerState.trimStart, getWebVideoElement]);
 
   // Enforce trim boundaries during playback
   useEffect(() => {
     if (!player || !isPlaying) return;
     const interval = setInterval(() => {
       try {
-        const currentTime = player.currentTime;
+        let currentTime = player.currentTime;
+        // On Web, also check DOM video element
+        const videoEl = getWebVideoElement();
+        if (videoEl && Platform.OS === "web") {
+          currentTime = videoEl.currentTime;
+        }
         if (currentTime >= effectivePlayerState.trimEnd) {
           player.currentTime = effectivePlayerState.trimStart;
+          if (videoEl) videoEl.currentTime = effectivePlayerState.trimStart;
         } else if (currentTime < effectivePlayerState.trimStart) {
           player.currentTime = effectivePlayerState.trimStart;
+          if (videoEl) videoEl.currentTime = effectivePlayerState.trimStart;
         }
       } catch (e) {
         // ignore
       }
     }, 200);
     return () => clearInterval(interval);
-  }, [player, isPlaying, effectivePlayerState.trimStart, effectivePlayerState.trimEnd]);
+  }, [player, isPlaying, effectivePlayerState.trimStart, effectivePlayerState.trimEnd, getWebVideoElement]);
 
   // Also sync the legacy speed state with track speed
   useEffect(() => {
@@ -762,7 +838,9 @@ export default function EditorScreen() {
             <View style={styles.trimBtns}>
               <Pressable
                 onPress={() => {
-                  setTrimStart(Math.max(0, trimStart - stepLarge));
+                  const newVal = Math.max(0, trimStart - stepLarge);
+                  setTrimStart(newVal);
+                  syncToVideoTrack({ trimStart: newVal });
                   if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                 }}
                 style={({ pressed }) => [
@@ -774,7 +852,11 @@ export default function EditorScreen() {
                 <Text style={{ color: colors.foreground, fontWeight: "700", fontSize: 12 }}>-{stepLarge}s</Text>
               </Pressable>
               <Pressable
-                onPress={() => setTrimStart(Math.max(0, trimStart - stepSmall))}
+                onPress={() => {
+                  const newVal = Math.max(0, trimStart - stepSmall);
+                  setTrimStart(newVal);
+                  syncToVideoTrack({ trimStart: newVal });
+                }}
                 style={({ pressed }) => [
                   styles.trimBtn,
                   { backgroundColor: colors.border },
@@ -784,7 +866,11 @@ export default function EditorScreen() {
                 <Text style={{ color: colors.foreground, fontWeight: "700", fontSize: 12 }}>-{stepSmall}s</Text>
               </Pressable>
               <Pressable
-                onPress={() => setTrimStart(Math.min(trimEnd - 0.5, trimStart + stepSmall))}
+                onPress={() => {
+                  const newVal = Math.min(trimEnd - 0.5, trimStart + stepSmall);
+                  setTrimStart(newVal);
+                  syncToVideoTrack({ trimStart: newVal });
+                }}
                 style={({ pressed }) => [
                   styles.trimBtn,
                   { backgroundColor: colors.border },
@@ -795,7 +881,9 @@ export default function EditorScreen() {
               </Pressable>
               <Pressable
                 onPress={() => {
-                  setTrimStart(Math.min(trimEnd - 0.5, trimStart + stepLarge));
+                  const newVal = Math.min(trimEnd - 0.5, trimStart + stepLarge);
+                  setTrimStart(newVal);
+                  syncToVideoTrack({ trimStart: newVal });
                   if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                 }}
                 style={({ pressed }) => [
@@ -819,7 +907,9 @@ export default function EditorScreen() {
             <View style={styles.trimBtns}>
               <Pressable
                 onPress={() => {
-                  setTrimEnd(Math.max(trimStart + 0.5, trimEnd - stepLarge));
+                  const newVal = Math.max(trimStart + 0.5, trimEnd - stepLarge);
+                  setTrimEnd(newVal);
+                  syncToVideoTrack({ trimEnd: newVal });
                   if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                 }}
                 style={({ pressed }) => [
@@ -831,7 +921,11 @@ export default function EditorScreen() {
                 <Text style={{ color: colors.foreground, fontWeight: "700", fontSize: 12 }}>-{stepLarge}s</Text>
               </Pressable>
               <Pressable
-                onPress={() => setTrimEnd(Math.max(trimStart + 0.5, trimEnd - stepSmall))}
+                onPress={() => {
+                  const newVal = Math.max(trimStart + 0.5, trimEnd - stepSmall);
+                  setTrimEnd(newVal);
+                  syncToVideoTrack({ trimEnd: newVal });
+                }}
                 style={({ pressed }) => [
                   styles.trimBtn,
                   { backgroundColor: colors.border },
@@ -841,7 +935,11 @@ export default function EditorScreen() {
                 <Text style={{ color: colors.foreground, fontWeight: "700", fontSize: 12 }}>-{stepSmall}s</Text>
               </Pressable>
               <Pressable
-                onPress={() => setTrimEnd(Math.min(duration, trimEnd + stepSmall))}
+                onPress={() => {
+                  const newVal = Math.min(duration, trimEnd + stepSmall);
+                  setTrimEnd(newVal);
+                  syncToVideoTrack({ trimEnd: newVal });
+                }}
                 style={({ pressed }) => [
                   styles.trimBtn,
                   { backgroundColor: colors.border },
@@ -852,7 +950,9 @@ export default function EditorScreen() {
               </Pressable>
               <Pressable
                 onPress={() => {
-                  setTrimEnd(Math.min(duration, trimEnd + stepLarge));
+                  const newVal = Math.min(duration, trimEnd + stepLarge);
+                  setTrimEnd(newVal);
+                  syncToVideoTrack({ trimEnd: newVal });
                   if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                 }}
                 style={({ pressed }) => [
@@ -872,6 +972,7 @@ export default function EditorScreen() {
             onPress={() => {
               setTrimStart(0);
               setTrimEnd(duration);
+              syncToVideoTrack({ trimStart: 0, trimEnd: duration });
             }}
             style={({ pressed }) => [
               styles.trimQuickBtn,
@@ -885,8 +986,11 @@ export default function EditorScreen() {
             onPress={() => {
               const mid = duration / 2;
               const quarter = duration / 4;
-              setTrimStart(Math.max(0, mid - quarter));
-              setTrimEnd(Math.min(duration, mid + quarter));
+              const newStart = Math.max(0, mid - quarter);
+              const newEnd = Math.min(duration, mid + quarter);
+              setTrimStart(newStart);
+              setTrimEnd(newEnd);
+              syncToVideoTrack({ trimStart: newStart, trimEnd: newEnd });
             }}
             style={({ pressed }) => [
               styles.trimQuickBtn,
@@ -898,8 +1002,10 @@ export default function EditorScreen() {
           </Pressable>
           <Pressable
             onPress={() => {
+              const newEnd = Math.min(duration, 30);
               setTrimStart(0);
-              setTrimEnd(Math.min(duration, 30));
+              setTrimEnd(newEnd);
+              syncToVideoTrack({ trimStart: 0, trimEnd: newEnd });
             }}
             style={({ pressed }) => [
               styles.trimQuickBtn,
@@ -1357,6 +1463,7 @@ export default function EditorScreen() {
               key={preset.value}
               onPress={() => {
                 setSpeed(preset.value);
+                syncToVideoTrack({ speed: preset.value });
                 if (Platform.OS !== "web")
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
               }}
@@ -1389,6 +1496,7 @@ export default function EditorScreen() {
               key={preset.value}
               onPress={() => {
                 setSpeed(preset.value);
+                syncToVideoTrack({ speed: preset.value });
                 if (Platform.OS !== "web")
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
               }}
@@ -1421,6 +1529,7 @@ export default function EditorScreen() {
               key={preset.value}
               onPress={() => {
                 setSpeed(preset.value);
+                syncToVideoTrack({ speed: preset.value });
                 if (Platform.OS !== "web")
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
               }}
@@ -1777,8 +1886,19 @@ export default function EditorScreen() {
                 <MultiTrackTimeline
                   tracks={tracks}
                   totalDuration={project.duration}
-                  onTracksChange={setTracks}
-                  onClipSelect={(trackId, clipId) => setSelectedClipId(clipId || null)}
+                   onTracksChange={(newTracks) => {
+                     setTracks(newTracks);
+                     // Sync multi-track changes back to legacy state
+                     const vt = newTracks.find((t) => t.type === "video");
+                     if (vt && vt.clips.length > 0) {
+                       const clip = vt.clips[0];
+                       setSpeed(clip.speed);
+                       setTrimStart(clip.trimStart);
+                       setTrimEnd(clip.trimEnd);
+                     }
+                   }}
+                   onClipSelect={(trackId, clipId) => setSelectedClipId(clipId || null)}
+
                   selectedClipId={selectedClipId}
                   isLandscape
                 />
@@ -1860,7 +1980,17 @@ export default function EditorScreen() {
             <MultiTrackTimeline
               tracks={tracks}
               totalDuration={project.duration}
-              onTracksChange={setTracks}
+              onTracksChange={(newTracks) => {
+                setTracks(newTracks);
+                // Sync multi-track changes back to legacy state
+                const vt = newTracks.find((t) => t.type === "video");
+                if (vt && vt.clips.length > 0) {
+                  const clip = vt.clips[0];
+                  setSpeed(clip.speed);
+                  setTrimStart(clip.trimStart);
+                  setTrimEnd(clip.trimEnd);
+                }
+              }}
               onClipSelect={(trackId, clipId) => setSelectedClipId(clipId || null)}
               selectedClipId={selectedClipId}
             />
