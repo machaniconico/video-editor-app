@@ -20,43 +20,37 @@ function applyTrimRight(clip: TimelineClip, deltaSec: number): TimelineClip {
   return { ...clip, trimEnd: newTrimEnd };
 }
 
-// Helper: simulate move logic
-function applyMove(
+// Helper: simulate move logic (same track only - no cross-track movement)
+function applyMoveSameTrack(
   tracks: TimelineTrack[],
   sourceTrackIndex: number,
   clipId: string,
-  deltaSeconds: number,
-  deltaTrackIndex: number
+  deltaSeconds: number
 ): TimelineTrack[] {
   const sourceTrack = tracks[sourceTrackIndex];
   const clip = sourceTrack.clips.find((c) => c.id === clipId);
   if (!clip) return tracks;
 
   const newOffset = Math.max(0, clip.timelineOffset + deltaSeconds);
-  const newTrackIndex = Math.max(0, Math.min(tracks.length - 1, sourceTrackIndex + deltaTrackIndex));
 
-  if (newTrackIndex === sourceTrackIndex) {
-    return tracks.map((t, idx) => {
-      if (idx !== sourceTrackIndex) return t;
-      return {
-        ...t,
-        clips: t.clips.map((c) =>
-          c.id === clipId ? { ...c, timelineOffset: newOffset } : c
-        ),
-      };
-    });
-  } else {
-    const movedClip = { ...clip, timelineOffset: newOffset };
-    return tracks.map((t, idx) => {
-      if (idx === sourceTrackIndex) {
-        return { ...t, clips: t.clips.filter((c) => c.id !== clipId) };
-      }
-      if (idx === newTrackIndex) {
-        return { ...t, clips: [...t.clips, movedClip] };
-      }
-      return t;
-    });
-  }
+  return tracks.map((t, idx) => {
+    if (idx !== sourceTrackIndex) return t;
+    return {
+      ...t,
+      clips: t.clips.map((c) =>
+        c.id === clipId ? { ...c, timelineOffset: newOffset } : c
+      ),
+    };
+  });
+}
+
+// Helper: simulate pinch zoom calculation
+function applyPinchZoom(initialZoom: number, initialDistance: number, currentDistance: number): number {
+  const ZOOM_MIN = 3;
+  const ZOOM_MAX = 300;
+  if (initialDistance === 0) return initialZoom;
+  const scale = currentDistance / initialDistance;
+  return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, initialZoom / scale));
 }
 
 describe("Clip Trim Left Handle", () => {
@@ -144,69 +138,85 @@ describe("Clip Trim Right Handle", () => {
   });
 });
 
-describe("Clip Move (same track)", () => {
+describe("Clip Move (same track only)", () => {
   it("should move clip forward on same track", () => {
     const tracks = createDefaultTracks("file:///test.mp4", 60);
     const clipId = tracks[0].clips[0].id;
-    const result = applyMove(tracks, 0, clipId, 10, 0);
+    const result = applyMoveSameTrack(tracks, 0, clipId, 10);
     expect(result[0].clips[0].timelineOffset).toBe(10);
   });
 
   it("should not move clip to negative offset", () => {
     const tracks = createDefaultTracks("file:///test.mp4", 60);
     const clipId = tracks[0].clips[0].id;
-    const result = applyMove(tracks, 0, clipId, -10, 0);
+    const result = applyMoveSameTrack(tracks, 0, clipId, -10);
     expect(result[0].clips[0].timelineOffset).toBe(0);
   });
 
-  it("should not change other tracks when moving on same track", () => {
+  it("should not change other tracks when moving", () => {
     const tracks = createDefaultTracks("file:///test.mp4", 60);
     const clipId = tracks[0].clips[0].id;
-    const result = applyMove(tracks, 0, clipId, 5, 0);
+    const result = applyMoveSameTrack(tracks, 0, clipId, 5);
     expect(result[1].clips.length).toBe(tracks[1].clips.length);
+    expect(result[1].clips[0].timelineOffset).toBe(0);
+  });
+
+  it("should only move horizontally, not cross tracks", () => {
+    const tracks = createDefaultTracks("file:///test.mp4", 60);
+    const clipId = tracks[0].clips[0].id;
+    // applyMoveSameTrack doesn't accept deltaTrackIndex - it's same track only
+    const result = applyMoveSameTrack(tracks, 0, clipId, 15);
+    // Clip stays on track 0
+    expect(result[0].clips.length).toBe(1);
+    expect(result[0].clips[0].timelineOffset).toBe(15);
+    // Track 1 unchanged
+    expect(result[1].clips.length).toBe(1);
   });
 });
 
-describe("Clip Move (cross-track)", () => {
-  it("should move clip from video track to audio track", () => {
-    const tracks = createDefaultTracks("file:///test.mp4", 60);
-    const clipId = tracks[0].clips[0].id;
-    const result = applyMove(tracks, 0, clipId, 5, 1);
-    // Source track should have no clips
-    expect(result[0].clips.length).toBe(0);
-    // Target track should have original clip + moved clip
-    expect(result[1].clips.length).toBe(2);
-    const movedClip = result[1].clips.find((c) => c.id === clipId);
-    expect(movedClip).toBeDefined();
-    expect(movedClip!.timelineOffset).toBe(5);
+describe("Pinch Zoom", () => {
+  it("should zoom in when fingers spread apart", () => {
+    const initialZoom = 30;
+    const initialDistance = 100;
+    const currentDistance = 200; // fingers spread 2x
+    const result = applyPinchZoom(initialZoom, initialDistance, currentDistance);
+    expect(result).toBe(15); // 30 / 2 = 15
   });
 
-  it("should move clip from audio track to video track", () => {
-    const tracks = createDefaultTracks("file:///test.mp4", 60);
-    const clipId = tracks[1].clips[0].id;
-    const result = applyMove(tracks, 1, clipId, 0, -1);
-    expect(result[1].clips.length).toBe(0);
-    expect(result[0].clips.length).toBe(2);
+  it("should zoom out when fingers pinch together", () => {
+    const initialZoom = 30;
+    const initialDistance = 200;
+    const currentDistance = 100; // fingers pinch to half
+    const result = applyPinchZoom(initialZoom, initialDistance, currentDistance);
+    expect(result).toBe(60); // 30 / 0.5 = 60
   });
 
-  it("should clamp track index to valid range", () => {
-    const tracks = createDefaultTracks("file:///test.mp4", 60);
-    const clipId = tracks[0].clips[0].id;
-    // Try to move above first track (delta = -5)
-    const result = applyMove(tracks, 0, clipId, 0, -5);
-    // Should stay on first track (index 0)
-    expect(result[0].clips.length).toBe(1);
-    expect(result[0].clips[0].id).toBe(clipId);
+  it("should clamp zoom to minimum", () => {
+    const initialZoom = 5;
+    const initialDistance = 50;
+    const currentDistance = 500; // 10x spread
+    const result = applyPinchZoom(initialZoom, initialDistance, currentDistance);
+    expect(result).toBe(3); // clamped to ZOOM_MIN
   });
 
-  it("should clamp track index when moving below last track", () => {
-    const tracks = createDefaultTracks("file:///test.mp4", 60);
-    const clipId = tracks[0].clips[0].id;
-    // Try to move way below (delta = 10, only 2 tracks)
-    const result = applyMove(tracks, 0, clipId, 0, 10);
-    // Should move to last track (index 1)
-    expect(result[0].clips.length).toBe(0);
-    expect(result[1].clips.length).toBe(2);
+  it("should clamp zoom to maximum", () => {
+    const initialZoom = 200;
+    const initialDistance = 200;
+    const currentDistance = 10; // extreme pinch
+    const result = applyPinchZoom(initialZoom, initialDistance, currentDistance);
+    expect(result).toBe(300); // clamped to ZOOM_MAX
+  });
+
+  it("should not change zoom when initial distance is 0", () => {
+    const initialZoom = 30;
+    const result = applyPinchZoom(initialZoom, 0, 100);
+    expect(result).toBe(30);
+  });
+
+  it("should handle no change in distance", () => {
+    const initialZoom = 30;
+    const result = applyPinchZoom(initialZoom, 100, 100);
+    expect(result).toBe(30);
   });
 });
 
@@ -219,7 +229,7 @@ describe("Clip visual width calculation", () => {
       timelineOffset: 0, speed: 2.0, volume: 1.0,
     };
     const clipWidth = ((clip.trimEnd - clip.trimStart) / clip.speed) * pixelsPerSecond;
-    expect(clipWidth).toBe(200); // (50-10)/2 * 10 = 200
+    expect(clipWidth).toBe(200);
   });
 
   it("should have minimum width of 30px", () => {
@@ -231,18 +241,26 @@ describe("Clip visual width calculation", () => {
     };
     const clipWidth = ((clip.trimEnd - clip.trimStart) / clip.speed) * pixelsPerSecond;
     const displayWidth = Math.max(clipWidth, 30);
-    expect(displayWidth).toBe(30); // 0.1px -> clamped to 30
+    expect(displayWidth).toBe(30);
   });
 });
 
-describe("X delete icon removal", () => {
-  it("should have delete button in clip controls panel instead of track header", () => {
-    // This test validates the design decision:
-    // The × icon was removed from track headers
-    // Delete is now available in the selected clip controls panel
-    const hasDeleteInTrackHeader = false; // removed
-    const hasDeleteInClipControls = true; // moved here
-    expect(hasDeleteInTrackHeader).toBe(false);
-    expect(hasDeleteInClipControls).toBe(true);
+describe("Track isolation", () => {
+  it("should not allow cross-track movement (design validation)", () => {
+    // The component now only supports horizontal movement within the same track
+    // There is no deltaTrackIndex parameter in the move logic
+    const tracks = createDefaultTracks("file:///test.mp4", 60);
+    const videoClipId = tracks[0].clips[0].id;
+    const audioClipId = tracks[1].clips[0].id;
+
+    // Move video clip - stays on video track
+    const result1 = applyMoveSameTrack(tracks, 0, videoClipId, 10);
+    expect(result1[0].clips.length).toBe(1);
+    expect(result1[1].clips.length).toBe(1);
+
+    // Move audio clip - stays on audio track
+    const result2 = applyMoveSameTrack(tracks, 1, audioClipId, 5);
+    expect(result2[0].clips.length).toBe(1);
+    expect(result2[1].clips.length).toBe(1);
   });
 });
