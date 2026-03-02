@@ -71,6 +71,14 @@ export function MultiTrackTimeline({
     onTracksChange(updated);
   };
 
+  const toggleVisibility = (trackId: string) => {
+    haptic();
+    const updated = tracks.map((t) =>
+      t.id === trackId ? { ...t, isHidden: !t.isHidden } : t
+    );
+    onTracksChange(updated);
+  };
+
   const toggleSolo = (trackId: string) => {
     haptic();
     const updated = tracks.map((t) =>
@@ -262,20 +270,39 @@ export function MultiTrackTimeline({
                     </Text>
                   </View>
                   <View style={s.trackControls}>
-                    <Pressable
-                      onPress={() => toggleMute(track.id)}
-                      style={({ pressed }) => [
-                        s.trackCtrlBtn,
-                        track.isMuted && { backgroundColor: `${colors.error}30` },
-                        pressed && { opacity: 0.6 },
-                      ]}
-                    >
-                      <IconSymbol
-                        name={track.isMuted ? "speaker.slash" : "speaker.wave.2"}
-                        size={12}
-                        color={track.isMuted ? colors.error : colors.muted}
-                      />
-                    </Pressable>
+                    {track.type === "video" ? (
+                      /* Video track: eye icon for visibility toggle */
+                      <Pressable
+                        onPress={() => toggleVisibility(track.id)}
+                        style={({ pressed }) => [
+                          s.trackCtrlBtn,
+                          track.isHidden && { backgroundColor: `${colors.error}30` },
+                          pressed && { opacity: 0.6 },
+                        ]}
+                      >
+                        <IconSymbol
+                          name={track.isHidden ? "eye.slash" : "eye"}
+                          size={12}
+                          color={track.isHidden ? colors.error : colors.muted}
+                        />
+                      </Pressable>
+                    ) : (
+                      /* Audio/BGM track: speaker icon for mute toggle */
+                      <Pressable
+                        onPress={() => toggleMute(track.id)}
+                        style={({ pressed }) => [
+                          s.trackCtrlBtn,
+                          track.isMuted && { backgroundColor: `${colors.error}30` },
+                          pressed && { opacity: 0.6 },
+                        ]}
+                      >
+                        <IconSymbol
+                          name={track.isMuted ? "speaker.slash" : "speaker.wave.2"}
+                          size={12}
+                          color={track.isMuted ? colors.error : colors.muted}
+                        />
+                      </Pressable>
+                    )}
                     <Pressable
                       onPress={() => toggleSolo(track.id)}
                       style={({ pressed }) => [

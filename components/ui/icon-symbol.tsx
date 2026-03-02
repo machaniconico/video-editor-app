@@ -55,6 +55,8 @@ const MAPPING = {
   "lock.open": "lock-open",
   "arrow.up.left.and.arrow.down.right": "fullscreen",
   "arrow.down.right.and.arrow.up.left": "fullscreen-exit",
+  "eye": "visibility",
+  "eye.slash": "visibility-off",
 } as const;
 
 export function IconSymbol({

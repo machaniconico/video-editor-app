@@ -70,7 +70,7 @@ export interface TimelineTrack {
   label: string;
   /** Clips on this track */
   clips: TimelineClip[];
-  /** Is the track muted? */
+  /** Is the track muted? (audio/bgm tracks only) */
   isMuted: boolean;
   /** Is the track in solo mode? */
   isSolo: boolean;
@@ -78,6 +78,8 @@ export interface TimelineTrack {
   volume: number;
   /** Track color for UI */
   color: string;
+  /** Is the video track hidden? (video tracks only) */
+  isHidden?: boolean;
 }
 
 export interface VideoProject {
@@ -186,6 +188,7 @@ export function createDefaultTracks(videoUri: string, duration: number): Timelin
       isSolo: false,
       volume: 1.0,
       color: TRACK_COLORS.video[0],
+      isHidden: false,
     },
     {
       id: `track_a1_${Date.now()}`,

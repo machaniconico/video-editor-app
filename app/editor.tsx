@@ -249,56 +249,46 @@ export default function EditorScreen() {
 
   // Compute effective volume and speed from tracks
   const effectivePlayerState = useMemo(() => {
-    // Find the first video track
-    const videoTrack = tracks.find((t) => t.type === "video");
+    // Find the first visible video track (skip hidden ones)
+    const videoTracks = tracks.filter((t) => t.type === "video");
+    const visibleVideoTrack = videoTracks.find((t) => !t.isHidden) ?? null;
     const audioTrack = tracks.find((t) => t.type === "audio");
 
     // Determine if any track is in solo mode
     const hasSolo = tracks.some((t) => t.isSolo);
 
-    // Video track speed (from first clip)
+    // Video track speed (from first visible video track's first clip)
     let videoSpeed = 1.0;
     let videoTrimStart = 0;
     let videoTrimEnd = project?.duration ?? 0;
-    if (videoTrack && videoTrack.clips.length > 0) {
-      const clip = videoTrack.clips[0];
+    let activeVideoUri = project?.videoUri ?? "";
+    let videoHidden = !visibleVideoTrack; // true if all video tracks are hidden
+
+    if (visibleVideoTrack && visibleVideoTrack.clips.length > 0) {
+      const clip = visibleVideoTrack.clips[0];
       videoSpeed = clip.speed;
       videoTrimStart = clip.trimStart;
       videoTrimEnd = clip.trimEnd;
+      activeVideoUri = clip.sourceUri;
     }
 
-    // Calculate effective volume:
-    // Video track contributes to video volume, audio track to audio volume
-    // When muted or solo logic applies, adjust accordingly
-    let videoMuted = false;
+    // Audio mute is controlled only by audio track's isMuted
     let audioVolume = 1.0;
-
-    if (videoTrack) {
-      const isVideoActive = hasSolo ? videoTrack.isSolo : !videoTrack.isMuted;
-      videoMuted = !isVideoActive;
-    }
-
     if (audioTrack) {
       const isAudioActive = hasSolo ? audioTrack.isSolo : !audioTrack.isMuted;
       if (!isAudioActive) {
         audioVolume = 0;
       } else {
-        // Combine track volume with first clip volume
         const clipVol = audioTrack.clips.length > 0 ? audioTrack.clips[0].volume : 1.0;
         audioVolume = audioTrack.volume * clipVol;
       }
     }
 
-    // If video track is not muted, combine its volume too
+    // Final volume is based on audio track only (video track visibility doesn't affect audio)
     let finalVolume = audioVolume;
-    if (videoTrack && !videoMuted) {
-      const videoClipVol = videoTrack.clips.length > 0 ? videoTrack.clips[0].volume : 1.0;
-      // Blend: use max of video and audio volume contributions
-      finalVolume = Math.max(audioVolume, videoTrack.volume * videoClipVol);
-    }
 
-    // If both video and audio are muted
-    const allMuted = videoMuted && audioVolume === 0;
+    // All audio muted only if audio track is muted
+    const allMuted = audioVolume === 0;
 
     return {
       speed: videoSpeed,
@@ -306,8 +296,10 @@ export default function EditorScreen() {
       muted: allMuted,
       trimStart: videoTrimStart,
       trimEnd: videoTrimEnd,
+      videoHidden,
+      activeVideoUri,
     };
-  }, [tracks, project?.duration]);
+  }, [tracks, project?.duration, project?.videoUri]);
 
   // Helper: find the underlying HTML5 <video> element on Web for direct DOM access
   const getWebVideoElement = useCallback((): HTMLVideoElement | null => {
@@ -547,12 +539,19 @@ export default function EditorScreen() {
       isLandscape && styles.previewContainerLandscape,
       isFullscreenPreview && { flex: 1 },
     ]}>
-      <VideoView
-        style={styles.videoView}
-        player={player}
-        contentFit="contain"
-        nativeControls={false}
-      />
+      {effectivePlayerState.videoHidden ? (
+        <View style={[styles.videoView, { backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' }]}>
+          <IconSymbol name="eye.slash" size={48} color="#555" />
+          <Text style={{ color: '#777', fontSize: 14, marginTop: 8 }}>ビデオ非表示</Text>
+        </View>
+      ) : (
+        <VideoView
+          style={styles.videoView}
+          player={player}
+          contentFit="contain"
+          nativeControls={false}
+        />
+      )}
       {/* Filter overlay */}
       {filterOverlay && filterOverlay.color !== "transparent" && (
         <View
@@ -631,6 +630,11 @@ export default function EditorScreen() {
         {effectivePlayerState.speed !== 1.0 && (
           <View style={[styles.previewBadge, { backgroundColor: "rgba(99,102,241,0.85)" }]}>
             <Text style={styles.previewBadgeText}>{effectivePlayerState.speed}x</Text>
+          </View>
+        )}
+        {effectivePlayerState.videoHidden && (
+          <View style={[styles.previewBadge, { backgroundColor: "rgba(107,114,128,0.85)" }]}>
+            <Text style={styles.previewBadgeText}>映像OFF</Text>
           </View>
         )}
         {effectivePlayerState.muted && (
