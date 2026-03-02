@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useRef } from "react";
 import {
   View,
   Text,
@@ -7,6 +7,9 @@ import {
   StyleSheet,
   Platform,
   Alert,
+  PanResponder,
+  GestureResponderEvent,
+  PanResponderGestureState,
 } from "react-native";
 import * as Haptics from "expo-haptics";
 import { launchImageLibraryAsync } from "expo-image-picker";
@@ -30,6 +33,32 @@ interface MultiTrackTimelineProps {
 
 // Zoom levels: seconds per screen width
 const ZOOM_LEVELS = [5, 10, 20, 30, 60, 120, 300];
+const TRACK_ROW_HEIGHT = 54;
+const HANDLE_WIDTH = 14;
+const LONG_PRESS_DELAY = 400;
+
+type DragMode = "none" | "trim-left" | "trim-right" | "move";
+
+interface DragState {
+  mode: DragMode;
+  trackId: string;
+  clipId: string;
+  /** Original clip data at drag start */
+  originalClip: TimelineClip;
+  /** Original track index at drag start */
+  originalTrackIndex: number;
+  /** Accumulated horizontal delta in seconds */
+  accDeltaSeconds: number;
+  /** Accumulated vertical delta in track indices */
+  accDeltaTracks: number;
+  /** Timer for long press detection */
+  longPressTimer: ReturnType<typeof setTimeout> | null;
+  /** Whether long press was triggered */
+  isLongPress: boolean;
+  /** Start position */
+  startX: number;
+  startY: number;
+}
 
 export function MultiTrackTimeline({
   tracks,
@@ -44,6 +73,28 @@ export function MultiTrackTimeline({
   const [scrollOffset, setScrollOffset] = useState(0);
   const secondsPerScreen = ZOOM_LEVELS[zoomIndex];
   const pixelsPerSecond = 300 / secondsPerScreen; // 300px base width
+
+  // Drag state ref (not state to avoid re-renders during drag)
+  const dragRef = useRef<DragState>({
+    mode: "none",
+    trackId: "",
+    clipId: "",
+    originalClip: {} as TimelineClip,
+    originalTrackIndex: 0,
+    accDeltaSeconds: 0,
+    accDeltaTracks: 0,
+    longPressTimer: null,
+    isLongPress: false,
+    startX: 0,
+    startY: 0,
+  });
+  const [activeDrag, setActiveDrag] = useState<{ mode: DragMode; clipId: string } | null>(null);
+  // Visual feedback for dragging clip (offset in px)
+  const [dragOffsetX, setDragOffsetX] = useState(0);
+  const [dragOffsetY, setDragOffsetY] = useState(0);
+  // Trim preview deltas (in seconds)
+  const [trimLeftDelta, setTrimLeftDelta] = useState(0);
+  const [trimRightDelta, setTrimRightDelta] = useState(0);
 
   const haptic = useCallback((style: Haptics.ImpactFeedbackStyle = Haptics.ImpactFeedbackStyle.Light) => {
     if (Platform.OS !== "web") Haptics.impactAsync(style);
@@ -204,6 +255,208 @@ export function MultiTrackTimeline({
     onTracksChange(updated);
   };
 
+  // ---- Trim handle drag logic ----
+  const startTrimDrag = (
+    mode: "trim-left" | "trim-right",
+    trackId: string,
+    clip: TimelineClip,
+    evt: GestureResponderEvent
+  ) => {
+    const trackIndex = tracks.findIndex((t) => t.id === trackId);
+    dragRef.current = {
+      mode,
+      trackId,
+      clipId: clip.id,
+      originalClip: { ...clip },
+      originalTrackIndex: trackIndex,
+      accDeltaSeconds: 0,
+      accDeltaTracks: 0,
+      longPressTimer: null,
+      isLongPress: false,
+      startX: evt.nativeEvent.pageX,
+      startY: evt.nativeEvent.pageY,
+    };
+    setActiveDrag({ mode, clipId: clip.id });
+    setTrimLeftDelta(0);
+    setTrimRightDelta(0);
+    haptic();
+  };
+
+  const onTrimMove = (evt: GestureResponderEvent) => {
+    const drag = dragRef.current;
+    if (drag.mode !== "trim-left" && drag.mode !== "trim-right") return;
+
+    const dx = evt.nativeEvent.pageX - drag.startX;
+    const deltaSec = dx / pixelsPerSecond;
+
+    if (drag.mode === "trim-left") {
+      // Clamp: trimStart can't go below 0 or above trimEnd - 0.5s
+      const maxDelta = drag.originalClip.trimEnd - drag.originalClip.trimStart - 0.5;
+      const minDelta = -drag.originalClip.trimStart;
+      const clamped = Math.max(minDelta, Math.min(maxDelta, deltaSec));
+      setTrimLeftDelta(clamped);
+    } else {
+      // Clamp: trimEnd can't go above duration or below trimStart + 0.5s
+      const maxDelta = drag.originalClip.duration - drag.originalClip.trimEnd;
+      const minDelta = -(drag.originalClip.trimEnd - drag.originalClip.trimStart - 0.5);
+      const clamped = Math.max(minDelta, Math.min(maxDelta, deltaSec));
+      setTrimRightDelta(clamped);
+    }
+  };
+
+  const onTrimEnd = () => {
+    const drag = dragRef.current;
+    if (drag.mode !== "trim-left" && drag.mode !== "trim-right") return;
+
+    const updated = tracks.map((t) => {
+      if (t.id !== drag.trackId) return t;
+      return {
+        ...t,
+        clips: t.clips.map((c) => {
+          if (c.id !== drag.clipId) return c;
+          if (drag.mode === "trim-left") {
+            const newTrimStart = Math.max(0, Math.min(c.trimEnd - 0.5, drag.originalClip.trimStart + trimLeftDelta));
+            return { ...c, trimStart: newTrimStart };
+          } else {
+            const newTrimEnd = Math.max(c.trimStart + 0.5, Math.min(drag.originalClip.duration, drag.originalClip.trimEnd + trimRightDelta));
+            return { ...c, trimEnd: newTrimEnd };
+          }
+        }),
+      };
+    });
+    onTracksChange(updated);
+
+    dragRef.current.mode = "none";
+    setActiveDrag(null);
+    setTrimLeftDelta(0);
+    setTrimRightDelta(0);
+  };
+
+  // ---- Long press + drag move logic ----
+  const startMoveDrag = (
+    trackId: string,
+    clip: TimelineClip,
+    evt: GestureResponderEvent
+  ) => {
+    const trackIndex = tracks.findIndex((t) => t.id === trackId);
+    // Set up long press timer
+    const timer = setTimeout(() => {
+      dragRef.current.isLongPress = true;
+      dragRef.current.mode = "move";
+      setActiveDrag({ mode: "move", clipId: clip.id });
+      haptic(Haptics.ImpactFeedbackStyle.Medium);
+    }, LONG_PRESS_DELAY);
+
+    dragRef.current = {
+      mode: "none", // will become "move" after long press
+      trackId,
+      clipId: clip.id,
+      originalClip: { ...clip },
+      originalTrackIndex: trackIndex,
+      accDeltaSeconds: 0,
+      accDeltaTracks: 0,
+      longPressTimer: timer,
+      isLongPress: false,
+      startX: evt.nativeEvent.pageX,
+      startY: evt.nativeEvent.pageY,
+    };
+    setDragOffsetX(0);
+    setDragOffsetY(0);
+  };
+
+  const onMoveGrant = (evt: GestureResponderEvent) => {
+    // Already handled in startMoveDrag
+  };
+
+  const onMoveMove = (evt: GestureResponderEvent) => {
+    const drag = dragRef.current;
+    const dx = evt.nativeEvent.pageX - drag.startX;
+    const dy = evt.nativeEvent.pageY - drag.startY;
+
+    // If moved too much before long press, cancel long press
+    if (!drag.isLongPress && drag.longPressTimer) {
+      if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
+        clearTimeout(drag.longPressTimer);
+        drag.longPressTimer = null;
+        return;
+      }
+    }
+
+    if (drag.mode !== "move") return;
+
+    setDragOffsetX(dx);
+    setDragOffsetY(dy);
+  };
+
+  const onMoveEnd = () => {
+    const drag = dragRef.current;
+
+    // Clear long press timer
+    if (drag.longPressTimer) {
+      clearTimeout(drag.longPressTimer);
+      drag.longPressTimer = null;
+    }
+
+    if (drag.mode !== "move") {
+      dragRef.current.mode = "none";
+      setActiveDrag(null);
+      return;
+    }
+
+    // Calculate new position
+    const deltaSec = dragOffsetX / pixelsPerSecond;
+    const deltaTrackIndex = Math.round(dragOffsetY / TRACK_ROW_HEIGHT);
+
+    const newOffset = Math.max(0, drag.originalClip.timelineOffset + deltaSec);
+    const newTrackIndex = Math.max(0, Math.min(tracks.length - 1, drag.originalTrackIndex + deltaTrackIndex));
+    const targetTrack = tracks[newTrackIndex];
+    const sourceTrack = tracks[drag.originalTrackIndex];
+
+    if (!targetTrack || !sourceTrack) {
+      dragRef.current.mode = "none";
+      setActiveDrag(null);
+      setDragOffsetX(0);
+      setDragOffsetY(0);
+      return;
+    }
+
+    let updated: TimelineTrack[];
+
+    if (newTrackIndex === drag.originalTrackIndex) {
+      // Same track: just update offset
+      updated = tracks.map((t) => {
+        if (t.id !== drag.trackId) return t;
+        return {
+          ...t,
+          clips: t.clips.map((c) =>
+            c.id === drag.clipId ? { ...c, timelineOffset: newOffset } : c
+          ),
+        };
+      });
+    } else {
+      // Different track: move clip from source to target
+      const movedClip = { ...drag.originalClip, timelineOffset: newOffset };
+      updated = tracks.map((t, idx) => {
+        if (idx === drag.originalTrackIndex) {
+          // Remove from source
+          return { ...t, clips: t.clips.filter((c) => c.id !== drag.clipId) };
+        }
+        if (idx === newTrackIndex) {
+          // Add to target
+          return { ...t, clips: [...t.clips, movedClip] };
+        }
+        return t;
+      });
+    }
+
+    onTracksChange(updated);
+
+    dragRef.current.mode = "none";
+    setActiveDrag(null);
+    setDragOffsetX(0);
+    setDragOffsetY(0);
+  };
+
   // Calculate total timeline width
   const timelineWidth = Math.max(totalDuration * pixelsPerSecond, 300);
 
@@ -228,54 +481,206 @@ export function MultiTrackTimeline({
     }
   };
 
+  const renderClip = (track: TimelineTrack, clip: TimelineClip) => {
+    const isSelected = selectedClipId === clip.id;
+    const isDragging = activeDrag?.clipId === clip.id;
+    const isDragMove = isDragging && activeDrag?.mode === "move";
+    const isTrimLeft = isDragging && activeDrag?.mode === "trim-left";
+    const isTrimRight = isDragging && activeDrag?.mode === "trim-right";
+
+    // Calculate visual trim adjustments
+    let visualTrimStart = clip.trimStart;
+    let visualTrimEnd = clip.trimEnd;
+    if (isTrimLeft) {
+      visualTrimStart = Math.max(0, Math.min(clip.trimEnd - 0.5, clip.trimStart + trimLeftDelta));
+    }
+    if (isTrimRight) {
+      visualTrimEnd = Math.max(clip.trimStart + 0.5, Math.min(clip.duration, clip.trimEnd + trimRightDelta));
+    }
+
+    const clipWidth = ((visualTrimEnd - visualTrimStart) / clip.speed) * pixelsPerSecond;
+    const clipLeft = clip.timelineOffset * pixelsPerSecond;
+
+    return (
+      <View
+        key={clip.id}
+        style={[
+          st.clipOuter,
+          {
+            left: clipLeft,
+            width: Math.max(clipWidth, 30),
+          },
+          isDragMove && {
+            transform: [{ translateX: dragOffsetX }, { translateY: dragOffsetY }],
+            zIndex: 100,
+            opacity: 0.85,
+            elevation: 8,
+          },
+        ]}
+      >
+        {/* Left trim handle */}
+        <View
+          style={[
+            st.trimHandle,
+            st.trimHandleLeft,
+            { backgroundColor: isTrimLeft ? track.color : `${track.color}80` },
+          ]}
+          onStartShouldSetResponder={() => true}
+          onMoveShouldSetResponder={() => true}
+          onResponderGrant={(evt) => startTrimDrag("trim-left", track.id, clip, evt)}
+          onResponderMove={onTrimMove}
+          onResponderRelease={onTrimEnd}
+          onResponderTerminate={onTrimEnd}
+        >
+          <View style={st.trimHandleBar} />
+        </View>
+
+        {/* Clip body (long press to move) */}
+        <View
+          style={[
+            st.clipBody,
+            {
+              backgroundColor: `${track.color}${isSelected ? "50" : "25"}`,
+              borderColor: isSelected ? track.color : `${track.color}60`,
+              borderLeftWidth: 0,
+              borderRightWidth: 0,
+            },
+            isDragMove && { borderColor: track.color, borderWidth: 2 },
+          ]}
+          onStartShouldSetResponder={() => true}
+          onMoveShouldSetResponder={() => true}
+          onResponderGrant={(evt) => {
+            startMoveDrag(track.id, clip, evt);
+          }}
+          onResponderMove={onMoveMove}
+          onResponderRelease={(evt) => {
+            const drag = dragRef.current;
+            // If it was a tap (no long press, no significant move)
+            if (!drag.isLongPress && drag.mode !== "move") {
+              if (drag.longPressTimer) {
+                clearTimeout(drag.longPressTimer);
+                drag.longPressTimer = null;
+              }
+              onClipSelect?.(track.id, clip.id);
+            }
+            onMoveEnd();
+          }}
+          onResponderTerminate={onMoveEnd}
+        >
+          <Text style={[st.clipName, { color: track.color }]} numberOfLines={1}>
+            {clip.name}
+          </Text>
+          <View style={st.clipInfo}>
+            <Text style={[st.clipDuration, { color: `${track.color}AA` }]}>
+              {formatTime((visualTrimEnd - visualTrimStart) / clip.speed)}
+            </Text>
+            {clip.speed !== 1.0 && (
+              <Text style={[st.clipSpeed, { color: `${track.color}AA` }]}>
+                {clip.speed}x
+              </Text>
+            )}
+          </View>
+          {/* Waveform visualization (decorative) */}
+          {(track.type === "audio" || track.type === "bgm") && (
+            <View style={st.waveformContainer}>
+              {Array.from({ length: Math.max(Math.floor(clipWidth / 4), 5) }).map((_, i) => (
+                <View
+                  key={i}
+                  style={[
+                    st.waveformBar,
+                    {
+                      height: 4 + Math.random() * 14,
+                      backgroundColor: `${track.color}60`,
+                    },
+                  ]}
+                />
+              ))}
+            </View>
+          )}
+          {isDragMove && (
+            <View style={[st.movingIndicator, { backgroundColor: `${track.color}30` }]}>
+              <IconSymbol name="arrow.up.and.down.and.arrow.left.and.right" size={16} color={track.color} />
+            </View>
+          )}
+        </View>
+
+        {/* Right trim handle */}
+        <View
+          style={[
+            st.trimHandle,
+            st.trimHandleRight,
+            { backgroundColor: isTrimRight ? track.color : `${track.color}80` },
+          ]}
+          onStartShouldSetResponder={() => true}
+          onMoveShouldSetResponder={() => true}
+          onResponderGrant={(evt) => startTrimDrag("trim-right", track.id, clip, evt)}
+          onResponderMove={onTrimMove}
+          onResponderRelease={onTrimEnd}
+          onResponderTerminate={onTrimEnd}
+        >
+          <View style={st.trimHandleBar} />
+        </View>
+      </View>
+    );
+  };
+
   return (
-    <View style={[s.container, { backgroundColor: colors.surface, borderTopColor: colors.border }]}>
+    <View style={[st.container, { backgroundColor: colors.surface, borderTopColor: colors.border }]}>
       {/* Header: Zoom controls + Add track */}
-      <View style={[s.header, { borderBottomColor: colors.border }]}>
-        <Text style={[s.headerTitle, { color: colors.foreground }]}>タイムライン</Text>
-        <View style={s.headerActions}>
-          <Pressable onPress={zoomIn} style={({ pressed }) => [s.zoomBtn, { backgroundColor: colors.border }, pressed && { opacity: 0.7 }]}>
+      <View style={[st.header, { borderBottomColor: colors.border }]}>
+        <Text style={[st.headerTitle, { color: colors.foreground }]}>タイムライン</Text>
+        <View style={st.headerActions}>
+          <Pressable onPress={zoomIn} style={({ pressed }) => [st.zoomBtn, { backgroundColor: colors.border }, pressed && { opacity: 0.7 }]}>
             <Text style={{ color: colors.foreground, fontWeight: "700", fontSize: 16 }}>+</Text>
           </Pressable>
-          <Text style={[s.zoomLabel, { color: colors.muted }]}>{secondsPerScreen}s</Text>
-          <Pressable onPress={zoomOut} style={({ pressed }) => [s.zoomBtn, { backgroundColor: colors.border }, pressed && { opacity: 0.7 }]}>
+          <Text style={[st.zoomLabel, { color: colors.muted }]}>{secondsPerScreen}s</Text>
+          <Pressable onPress={zoomOut} style={({ pressed }) => [st.zoomBtn, { backgroundColor: colors.border }, pressed && { opacity: 0.7 }]}>
             <Text style={{ color: colors.foreground, fontWeight: "700", fontSize: 16 }}>−</Text>
           </Pressable>
         </View>
       </View>
 
       {/* Timeline content */}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.scrollH}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={st.scrollH}
+        scrollEnabled={!activeDrag}
+      >
         <View style={{ width: timelineWidth + 120 }}>
           {/* Time ruler */}
-          <View style={[s.ruler, { borderBottomColor: colors.border }]}>
+          <View style={[st.ruler, { borderBottomColor: colors.border }]}>
             {rulerMarks.map((t) => (
-              <View key={t} style={[s.rulerMark, { left: 120 + t * pixelsPerSecond }]}>
-                <View style={[s.rulerLine, { backgroundColor: colors.border }]} />
-                <Text style={[s.rulerText, { color: colors.muted }]}>{formatTime(t)}</Text>
+              <View key={t} style={[st.rulerMark, { left: 120 + t * pixelsPerSecond }]}>
+                <View style={[st.rulerLine, { backgroundColor: colors.border }]} />
+                <Text style={[st.rulerText, { color: colors.muted }]}>{formatTime(t)}</Text>
               </View>
             ))}
           </View>
 
           {/* Tracks */}
-          <ScrollView style={s.tracksScroll} nestedScrollEnabled showsVerticalScrollIndicator={false}>
+          <ScrollView
+            style={st.tracksScroll}
+            nestedScrollEnabled
+            showsVerticalScrollIndicator={false}
+            scrollEnabled={!activeDrag}
+          >
             {tracks.map((track) => (
-              <View key={track.id} style={[s.trackRow, { borderBottomColor: colors.border }]}>
+              <View key={track.id} style={[st.trackRow, { borderBottomColor: colors.border }]}>
                 {/* Track header (fixed left) */}
-                <View style={[s.trackHeader, { backgroundColor: `${track.color}15`, borderRightColor: colors.border }]}>
-                  <View style={s.trackLabelRow}>
+                <View style={[st.trackHeader, { backgroundColor: `${track.color}15`, borderRightColor: colors.border }]}>
+                  <View style={st.trackLabelRow}>
                     <IconSymbol name={getTrackIcon(track.type)} size={14} color={track.color} />
-                    <Text style={[s.trackLabel, { color: colors.foreground }]} numberOfLines={1}>
+                    <Text style={[st.trackLabel, { color: colors.foreground }]} numberOfLines={1}>
                       {track.label}
                     </Text>
                   </View>
-                  <View style={s.trackControls}>
+                  <View style={st.trackControls}>
                     {track.type === "video" ? (
-                      /* Video track: eye icon for visibility toggle */
                       <Pressable
                         onPress={() => toggleVisibility(track.id)}
                         style={({ pressed }) => [
-                          s.trackCtrlBtn,
+                          st.trackCtrlBtn,
                           track.isHidden && { backgroundColor: `${colors.error}30` },
                           pressed && { opacity: 0.6 },
                         ]}
@@ -287,11 +692,10 @@ export function MultiTrackTimeline({
                         />
                       </Pressable>
                     ) : (
-                      /* Audio/BGM track: speaker icon for mute toggle */
                       <Pressable
                         onPress={() => toggleMute(track.id)}
                         style={({ pressed }) => [
-                          s.trackCtrlBtn,
+                          st.trackCtrlBtn,
                           track.isMuted && { backgroundColor: `${colors.error}30` },
                           pressed && { opacity: 0.6 },
                         ]}
@@ -306,7 +710,7 @@ export function MultiTrackTimeline({
                     <Pressable
                       onPress={() => toggleSolo(track.id)}
                       style={({ pressed }) => [
-                        s.trackCtrlBtn,
+                        st.trackCtrlBtn,
                         track.isSolo && { backgroundColor: `${colors.warning}30` },
                         pressed && { opacity: 0.6 },
                       ]}
@@ -314,7 +718,7 @@ export function MultiTrackTimeline({
                       <Text style={{ fontSize: 10, fontWeight: "800", color: track.isSolo ? colors.warning : colors.muted }}>S</Text>
                     </Pressable>
                     {/* Volume */}
-                    <View style={s.volumeRow}>
+                    <View style={st.volumeRow}>
                       <Pressable onPress={() => adjustTrackVolume(track.id, -0.1)} style={({ pressed }) => [pressed && { opacity: 0.6 }]}>
                         <Text style={{ color: colors.muted, fontSize: 12, fontWeight: "700" }}>−</Text>
                       </Pressable>
@@ -325,71 +729,14 @@ export function MultiTrackTimeline({
                         <Text style={{ color: colors.muted, fontSize: 12, fontWeight: "700" }}>+</Text>
                       </Pressable>
                     </View>
-                    <Pressable
-                      onPress={() => removeTrack(track.id)}
-                      style={({ pressed }) => [s.trackCtrlBtn, pressed && { opacity: 0.6 }]}
-                    >
-                      <IconSymbol name="xmark" size={11} color={colors.error} />
-                    </Pressable>
                   </View>
                 </View>
 
                 {/* Track clips area */}
-                <View style={s.trackClipsArea}>
-                  {track.clips.map((clip) => {
-                    const clipWidth = ((clip.trimEnd - clip.trimStart) / clip.speed) * pixelsPerSecond;
-                    const clipLeft = clip.timelineOffset * pixelsPerSecond;
-                    const isSelected = selectedClipId === clip.id;
-                    return (
-                      <Pressable
-                        key={clip.id}
-                        onPress={() => onClipSelect?.(track.id, clip.id)}
-                        style={({ pressed }) => [
-                          s.clip,
-                          {
-                            left: clipLeft,
-                            width: Math.max(clipWidth, 30),
-                            backgroundColor: `${track.color}${isSelected ? "50" : "25"}`,
-                            borderColor: isSelected ? track.color : `${track.color}60`,
-                          },
-                          pressed && { opacity: 0.8 },
-                        ]}
-                      >
-                        <Text style={[s.clipName, { color: track.color }]} numberOfLines={1}>
-                          {clip.name}
-                        </Text>
-                        <View style={s.clipInfo}>
-                          <Text style={[s.clipDuration, { color: `${track.color}AA` }]}>
-                            {formatTime((clip.trimEnd - clip.trimStart) / clip.speed)}
-                          </Text>
-                          {clip.speed !== 1.0 && (
-                            <Text style={[s.clipSpeed, { color: `${track.color}AA` }]}>
-                              {clip.speed}x
-                            </Text>
-                          )}
-                        </View>
-                        {/* Waveform visualization (decorative) */}
-                        {(track.type === "audio" || track.type === "bgm") && (
-                          <View style={s.waveformContainer}>
-                            {Array.from({ length: Math.max(Math.floor(clipWidth / 4), 5) }).map((_, i) => (
-                              <View
-                                key={i}
-                                style={[
-                                  s.waveformBar,
-                                  {
-                                    height: 4 + Math.random() * 14,
-                                    backgroundColor: `${track.color}60`,
-                                  },
-                                ]}
-                              />
-                            ))}
-                          </View>
-                        )}
-                      </Pressable>
-                    );
-                  })}
+                <View style={st.trackClipsArea}>
+                  {track.clips.map((clip) => renderClip(track, clip))}
                   {track.clips.length === 0 && (
-                    <View style={s.emptyTrack}>
+                    <View style={st.emptyTrack}>
                       <Text style={{ color: colors.muted, fontSize: 11 }}>空のトラック</Text>
                     </View>
                   )}
@@ -410,61 +757,77 @@ export function MultiTrackTimeline({
         }
         if (!selectedTrack || !selectedClip) return null;
         return (
-          <View style={[s.clipControls, { backgroundColor: colors.background, borderTopColor: colors.border }]}>
-            <View style={s.clipControlsHeader}>
+          <View style={[st.clipControls, { backgroundColor: colors.background, borderTopColor: colors.border }]}>
+            <View style={st.clipControlsHeader}>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                <View style={[s.clipColorDot, { backgroundColor: selectedTrack.color }]} />
-                <Text style={[s.clipControlsTitle, { color: colors.foreground }]} numberOfLines={1}>
+                <View style={[st.clipColorDot, { backgroundColor: selectedTrack.color }]} />
+                <Text style={[st.clipControlsTitle, { color: colors.foreground }]} numberOfLines={1}>
                   {selectedClip.name}
                 </Text>
               </View>
-              <Pressable onPress={() => onClipSelect?.("", "")} style={({ pressed }) => [pressed && { opacity: 0.6 }]}>
-                <IconSymbol name="xmark" size={16} color={colors.muted} />
-              </Pressable>
+              <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+                <Pressable
+                  onPress={() => removeTrack(selectedTrack!.id)}
+                  style={({ pressed }) => [st.deleteBtn, { backgroundColor: `${colors.error}15`, borderColor: colors.error }, pressed && { opacity: 0.7 }]}
+                >
+                  <IconSymbol name="trash" size={12} color={colors.error} />
+                  <Text style={{ color: colors.error, fontSize: 10, fontWeight: "600" }}>削除</Text>
+                </Pressable>
+                <Pressable onPress={() => onClipSelect?.("", "")} style={({ pressed }) => [pressed && { opacity: 0.6 }]}>
+                  <IconSymbol name="xmark" size={16} color={colors.muted} />
+                </Pressable>
+              </View>
             </View>
-            <View style={s.clipControlsRow}>
+            <View style={st.clipControlsRow}>
               {/* Speed control */}
-              <View style={s.clipControlItem}>
-                <Text style={[s.clipControlLabel, { color: colors.muted }]}>速度</Text>
-                <View style={s.clipControlBtns}>
+              <View style={st.clipControlItem}>
+                <Text style={[st.clipControlLabel, { color: colors.muted }]}>速度</Text>
+                <View style={st.clipControlBtns}>
                   <Pressable
                     onPress={() => adjustClipSpeed(selectedTrack!.id, selectedClip!.id, selectedClip!.speed - 0.25)}
-                    style={({ pressed }) => [s.miniBtn, { backgroundColor: colors.border }, pressed && { opacity: 0.7 }]}
+                    style={({ pressed }) => [st.miniBtn, { backgroundColor: colors.border }, pressed && { opacity: 0.7 }]}
                   >
                     <Text style={{ color: colors.foreground, fontWeight: "700" }}>−</Text>
                   </Pressable>
-                  <Text style={[s.clipControlValue, { color: colors.primary }]}>{selectedClip.speed}x</Text>
+                  <Text style={[st.clipControlValue, { color: colors.primary }]}>{selectedClip.speed}x</Text>
                   <Pressable
                     onPress={() => adjustClipSpeed(selectedTrack!.id, selectedClip!.id, selectedClip!.speed + 0.25)}
-                    style={({ pressed }) => [s.miniBtn, { backgroundColor: colors.border }, pressed && { opacity: 0.7 }]}
+                    style={({ pressed }) => [st.miniBtn, { backgroundColor: colors.border }, pressed && { opacity: 0.7 }]}
                   >
                     <Text style={{ color: colors.foreground, fontWeight: "700" }}>+</Text>
                   </Pressable>
                 </View>
               </View>
               {/* Volume control */}
-              <View style={s.clipControlItem}>
-                <Text style={[s.clipControlLabel, { color: colors.muted }]}>音量</Text>
-                <View style={s.clipControlBtns}>
+              <View style={st.clipControlItem}>
+                <Text style={[st.clipControlLabel, { color: colors.muted }]}>音量</Text>
+                <View style={st.clipControlBtns}>
                   <Pressable
                     onPress={() => adjustClipVolume(selectedTrack!.id, selectedClip!.id, -0.1)}
-                    style={({ pressed }) => [s.miniBtn, { backgroundColor: colors.border }, pressed && { opacity: 0.7 }]}
+                    style={({ pressed }) => [st.miniBtn, { backgroundColor: colors.border }, pressed && { opacity: 0.7 }]}
                   >
                     <Text style={{ color: colors.foreground, fontWeight: "700" }}>−</Text>
                   </Pressable>
-                  <Text style={[s.clipControlValue, { color: colors.primary }]}>{Math.round(selectedClip.volume * 100)}%</Text>
+                  <Text style={[st.clipControlValue, { color: colors.primary }]}>{Math.round(selectedClip.volume * 100)}%</Text>
                   <Pressable
                     onPress={() => adjustClipVolume(selectedTrack!.id, selectedClip!.id, 0.1)}
-                    style={({ pressed }) => [s.miniBtn, { backgroundColor: colors.border }, pressed && { opacity: 0.7 }]}
+                    style={({ pressed }) => [st.miniBtn, { backgroundColor: colors.border }, pressed && { opacity: 0.7 }]}
                   >
                     <Text style={{ color: colors.foreground, fontWeight: "700" }}>+</Text>
                   </Pressable>
                 </View>
               </View>
+              {/* Trim info */}
+              <View style={st.clipControlItem}>
+                <Text style={[st.clipControlLabel, { color: colors.muted }]}>トリム</Text>
+                <Text style={[st.clipControlValue, { color: colors.foreground, fontSize: 10 }]}>
+                  {formatTime(selectedClip.trimStart)} - {formatTime(selectedClip.trimEnd)}
+                </Text>
+              </View>
               {/* Duration info */}
-              <View style={s.clipControlItem}>
-                <Text style={[s.clipControlLabel, { color: colors.muted }]}>長さ</Text>
-                <Text style={[s.clipControlValue, { color: colors.foreground }]}>
+              <View style={st.clipControlItem}>
+                <Text style={[st.clipControlLabel, { color: colors.muted }]}>長さ</Text>
+                <Text style={[st.clipControlValue, { color: colors.foreground }]}>
                   {formatTime((selectedClip.trimEnd - selectedClip.trimStart) / selectedClip.speed)}
                 </Text>
               </View>
@@ -474,11 +837,11 @@ export function MultiTrackTimeline({
       })()}
 
       {/* Add track buttons */}
-      <View style={[s.addTrackRow, { borderTopColor: colors.border }]}>
+      <View style={[st.addTrackRow, { borderTopColor: colors.border }]}>
         <Pressable
           onPress={() => addTrack("video")}
           style={({ pressed }) => [
-            s.addTrackBtn,
+            st.addTrackBtn,
             { backgroundColor: `${colors.primary}15`, borderColor: colors.primary },
             pressed && { opacity: 0.7 },
           ]}
@@ -489,7 +852,7 @@ export function MultiTrackTimeline({
         <Pressable
           onPress={() => addTrack("audio")}
           style={({ pressed }) => [
-            s.addTrackBtn,
+            st.addTrackBtn,
             { backgroundColor: `${colors.warning}15`, borderColor: colors.warning },
             pressed && { opacity: 0.7 },
           ]}
@@ -500,7 +863,7 @@ export function MultiTrackTimeline({
         <Pressable
           onPress={() => addTrack("bgm")}
           style={({ pressed }) => [
-            s.addTrackBtn,
+            st.addTrackBtn,
             { backgroundColor: `${colors.success}15`, borderColor: colors.success },
             pressed && { opacity: 0.7 },
           ]}
@@ -513,7 +876,7 @@ export function MultiTrackTimeline({
   );
 }
 
-const s = StyleSheet.create({
+const st = StyleSheet.create({
   container: {
     borderTopWidth: 0.5,
   },
@@ -574,7 +937,7 @@ const s = StyleSheet.create({
   },
   trackRow: {
     flexDirection: "row",
-    minHeight: 54,
+    minHeight: TRACK_ROW_HEIGHT,
     borderBottomWidth: 0.5,
   },
   trackHeader: {
@@ -616,13 +979,45 @@ const s = StyleSheet.create({
     position: "relative",
     paddingVertical: 4,
   },
-  clip: {
+  // Clip outer container (includes handles)
+  clipOuter: {
     position: "absolute",
     top: 4,
     bottom: 4,
-    borderRadius: 6,
+    flexDirection: "row",
+    alignItems: "stretch",
+  },
+  // Trim handles
+  trimHandle: {
+    width: HANDLE_WIDTH,
+    borderRadius: 4,
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 10,
+  },
+  trimHandleLeft: {
+    borderTopRightRadius: 0,
+    borderBottomRightRadius: 0,
+    borderTopLeftRadius: 6,
+    borderBottomLeftRadius: 6,
+  },
+  trimHandleRight: {
+    borderTopLeftRadius: 0,
+    borderBottomLeftRadius: 0,
+    borderTopRightRadius: 6,
+    borderBottomRightRadius: 6,
+  },
+  trimHandleBar: {
+    width: 3,
+    height: 16,
+    borderRadius: 1.5,
+    backgroundColor: "rgba(255,255,255,0.6)",
+  },
+  // Clip body (between handles)
+  clipBody: {
+    flex: 1,
     borderWidth: 1.5,
-    paddingHorizontal: 6,
+    paddingHorizontal: 4,
     paddingVertical: 3,
     justifyContent: "center",
     overflow: "hidden",
@@ -659,6 +1054,12 @@ const s = StyleSheet.create({
     width: 2,
     borderRadius: 1,
   },
+  movingIndicator: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 4,
+  },
   emptyTrack: {
     flex: 1,
     alignItems: "center",
@@ -683,6 +1084,15 @@ const s = StyleSheet.create({
     fontSize: 13,
     fontWeight: "600",
     maxWidth: 200,
+  },
+  deleteBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
   },
   clipControlsRow: {
     flexDirection: "row",
