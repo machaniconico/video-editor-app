@@ -57,6 +57,10 @@ const MAPPING = {
   "arrow.down.right.and.arrow.up.left": "fullscreen-exit",
   "eye": "visibility",
   "eye.slash": "visibility-off",
+  "divide": "vertical-split",
+  "doc.on.doc": "content-copy",
+  "doc.on.clipboard": "content-paste",
+  "text.badge.plus": "post-add",
 } as const;
 
 export function IconSymbol({

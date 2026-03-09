@@ -14,6 +14,10 @@ export interface TextOverlay {
   x: number;
   y: number;
   rotation: number;
+  /** Start time on timeline (seconds). Defaults to 0 */
+  startTime: number;
+  /** End time on timeline (seconds). Defaults to video duration */
+  endTime: number;
 }
 
 export interface FrameSlot {

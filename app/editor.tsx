@@ -1112,6 +1112,8 @@ export default function EditorScreen() {
       x: 50,
       y: 50,
       rotation: 0,
+      startTime: 0,
+      endTime: project?.duration ?? 0,
     };
     setTextOverlays([...textOverlays, newOverlay]);
     setSelectedTextId(newOverlay.id);
@@ -1904,21 +1906,23 @@ export default function EditorScreen() {
                   tracks={tracks}
                   totalDuration={project.duration}
                   currentTime={currentPlaybackTime}
-                   onTracksChange={(newTracks) => {
-                     setTracks(newTracks);
-                     // Sync multi-track changes back to legacy state
-                     const vt = newTracks.find((t) => t.type === "video");
-                     if (vt && vt.clips.length > 0) {
-                       const clip = vt.clips[0];
-                       setSpeed(clip.speed);
-                       setTrimStart(clip.trimStart);
-                       setTrimEnd(clip.trimEnd);
-                     }
-                   }}
-                   onClipSelect={(trackId, clipId) => setSelectedClipId(clipId || null)}
-
+                  onTracksChange={(newTracks) => {
+                    setTracks(newTracks);
+                    const vt = newTracks.find((t) => t.type === "video");
+                    if (vt && vt.clips.length > 0) {
+                      const clip = vt.clips[0];
+                      setSpeed(clip.speed);
+                      setTrimStart(clip.trimStart);
+                      setTrimEnd(clip.trimEnd);
+                    }
+                  }}
+                  onClipSelect={(trackId, clipId) => setSelectedClipId(clipId || null)}
                   selectedClipId={selectedClipId}
                   isLandscape
+                  textOverlays={textOverlays}
+                  onTextOverlaysChange={setTextOverlays}
+                  onTextOverlaySelect={setSelectedTextId}
+                  selectedTextId={selectedTextId}
                 />
               )}
             </View>
@@ -2001,7 +2005,6 @@ export default function EditorScreen() {
               currentTime={currentPlaybackTime}
               onTracksChange={(newTracks) => {
                 setTracks(newTracks);
-                // Sync multi-track changes back to legacy state
                 const vt = newTracks.find((t) => t.type === "video");
                 if (vt && vt.clips.length > 0) {
                   const clip = vt.clips[0];
@@ -2012,6 +2015,10 @@ export default function EditorScreen() {
               }}
               onClipSelect={(trackId, clipId) => setSelectedClipId(clipId || null)}
               selectedClipId={selectedClipId}
+              textOverlays={textOverlays}
+              onTextOverlaysChange={setTextOverlays}
+              onTextOverlaySelect={setSelectedTextId}
+              selectedTextId={selectedTextId}
             />
 
             {/* Tool Panel (animated) */}

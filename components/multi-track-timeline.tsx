@@ -18,6 +18,7 @@ import {
   TimelineTrack,
   TimelineClip,
   TrackType,
+  TextOverlay,
   getNextTrackColor,
 } from "@/lib/editor-context";
 
@@ -30,6 +31,14 @@ interface MultiTrackTimelineProps {
   isLandscape?: boolean;
   /** Current playback position in seconds (for playhead display) */
   currentTime?: number;
+  /** Text overlays to show on timeline (video category) */
+  textOverlays?: TextOverlay[];
+  /** Callback when text overlays change */
+  onTextOverlaysChange?: (overlays: TextOverlay[]) => void;
+  /** Callback when a text overlay is selected */
+  onTextOverlaySelect?: (id: string | null) => void;
+  /** Currently selected text overlay id */
+  selectedTextId?: string | null;
 }
 
 // Zoom: continuous seconds-per-screen (not discrete levels)
@@ -39,6 +48,7 @@ const ZOOM_PRESETS = [5, 10, 20, 30, 60, 120, 300];
 const TRACK_ROW_HEIGHT = 54;
 const HANDLE_HIT_SLOP = 20; // extra touch area for handles
 const LONG_PRESS_DELAY = 350;
+const PLAYHEAD_COLOR = "#FFD60A"; // Yellow playhead
 
 type DragMode = "none" | "trim-left" | "trim-right" | "move";
 
@@ -54,6 +64,13 @@ interface DragState {
   startY: number;
 }
 
+// Clipboard for cut/copy/paste
+interface ClipboardData {
+  clip: TimelineClip;
+  trackType: TrackType;
+  operation: "cut" | "copy";
+}
+
 export function MultiTrackTimeline({
   tracks,
   totalDuration,
@@ -62,10 +79,17 @@ export function MultiTrackTimeline({
   selectedClipId,
   isLandscape = false,
   currentTime = 0,
+  textOverlays = [],
+  onTextOverlaysChange,
+  onTextOverlaySelect,
+  selectedTextId,
 }: MultiTrackTimelineProps) {
   const colors = useColors();
   const [secondsPerScreen, setSecondsPerScreen] = useState(30);
   const pixelsPerSecond = 300 / secondsPerScreen;
+
+  // Clipboard state
+  const [clipboard, setClipboard] = useState<ClipboardData | null>(null);
 
   // Pinch zoom state
   const pinchRef = useRef({
@@ -145,7 +169,6 @@ export function MultiTrackTimeline({
     if (pinchRef.current.initialDistance === 0) return;
 
     const scale = currentDistance / pinchRef.current.initialDistance;
-    // Wider pinch = zoom in (fewer seconds per screen)
     const newZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, pinchRef.current.initialZoom / scale));
     setSecondsPerScreen(newZoom);
   };
@@ -261,6 +284,92 @@ export function MultiTrackTimeline({
       if (t.id !== trackId) return t;
       return { ...t, clips: t.clips.map((c) => c.id === clipId ? { ...c, volume: Math.max(0, Math.min(1, c.volume + delta)) } : c) };
     }));
+  };
+
+  // ---- Split clip at playhead ----
+  const splitClipAtPlayhead = (trackId: string, clipId: string) => {
+    haptic(Haptics.ImpactFeedbackStyle.Medium);
+    onTracksChange(tracks.map((t) => {
+      if (t.id !== trackId) return t;
+      const clipIndex = t.clips.findIndex((c) => c.id === clipId);
+      if (clipIndex === -1) return t;
+      const clip = t.clips[clipIndex];
+
+      // Calculate the source time at the playhead position
+      const clipTimelineStart = clip.timelineOffset;
+      const clipTimelineEnd = clip.timelineOffset + ((clip.trimEnd - clip.trimStart) / clip.speed);
+
+      if (currentTime <= clipTimelineStart || currentTime >= clipTimelineEnd) {
+        // Playhead is not within this clip
+        return t;
+      }
+
+      // Source time at playhead
+      const sourceTimeAtPlayhead = clip.trimStart + (currentTime - clip.timelineOffset) * clip.speed;
+
+      // Create two clips from the split
+      const clip1: TimelineClip = {
+        ...clip,
+        id: `${clip.id}_L`,
+        trimEnd: sourceTimeAtPlayhead,
+      };
+
+      const clip2: TimelineClip = {
+        ...clip,
+        id: `${clip.id}_R`,
+        trimStart: sourceTimeAtPlayhead,
+        timelineOffset: currentTime,
+      };
+
+      const newClips = [...t.clips];
+      newClips.splice(clipIndex, 1, clip1, clip2);
+      return { ...t, clips: newClips };
+    }));
+  };
+
+  // ---- Cut / Copy / Paste ----
+  const cutClip = (trackId: string, clipId: string) => {
+    const track = tracks.find((t) => t.id === trackId);
+    const clip = track?.clips.find((c) => c.id === clipId);
+    if (!track || !clip) return;
+
+    setClipboard({ clip: { ...clip }, trackType: track.type, operation: "cut" });
+    // Remove the clip from the track
+    onTracksChange(tracks.map((t) => {
+      if (t.id !== trackId) return t;
+      return { ...t, clips: t.clips.filter((c) => c.id !== clipId) };
+    }));
+    onClipSelect?.("", "");
+    haptic(Haptics.ImpactFeedbackStyle.Medium);
+  };
+
+  const copyClip = (trackId: string, clipId: string) => {
+    const track = tracks.find((t) => t.id === trackId);
+    const clip = track?.clips.find((c) => c.id === clipId);
+    if (!track || !clip) return;
+
+    setClipboard({ clip: { ...clip }, trackType: track.type, operation: "copy" });
+    haptic();
+  };
+
+  const pasteClip = (trackId: string) => {
+    if (!clipboard) return;
+    const track = tracks.find((t) => t.id === trackId);
+    if (!track) return;
+    // Only paste to same type of track
+    if (track.type !== clipboard.trackType) return;
+
+    const newClip: TimelineClip = {
+      ...clipboard.clip,
+      id: `clip_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      timelineOffset: currentTime, // Paste at playhead position
+    };
+
+    onTracksChange(tracks.map((t) => {
+      if (t.id !== trackId) return t;
+      return { ...t, clips: [...t.clips, newClip] };
+    }));
+    haptic(Haptics.ImpactFeedbackStyle.Medium);
   };
 
   // ---- Trim handle drag (immediate, no long press needed) ----
@@ -379,7 +488,6 @@ export function MultiTrackTimeline({
     }
 
     if (drag.mode !== "move") return;
-    // Only horizontal movement (no cross-track)
     setDragOffsetX(dx);
   };
 
@@ -448,15 +556,21 @@ export function MultiTrackTimeline({
 
     let visualTrimStart = clip.trimStart;
     let visualTrimEnd = clip.trimEnd;
+    let visualOffset = clip.timelineOffset;
+
     if (isTrimLeft) {
-      visualTrimStart = Math.max(0, Math.min(clip.trimEnd - 0.5, clip.trimStart + trimLeftDelta));
+      const newTrimStart = Math.max(0, Math.min(clip.trimEnd - 0.5, clip.trimStart + trimLeftDelta));
+      const trimDelta = newTrimStart - clip.trimStart;
+      visualTrimStart = newTrimStart;
+      // Visually shift the clip position to match the left trim
+      visualOffset = Math.max(0, clip.timelineOffset + (trimDelta / clip.speed));
     }
     if (isTrimRight) {
       visualTrimEnd = Math.max(clip.trimStart + 0.5, Math.min(clip.duration, clip.trimEnd + trimRightDelta));
     }
 
     const clipWidth = ((visualTrimEnd - visualTrimStart) / clip.speed) * pixelsPerSecond;
-    const clipLeft = clip.timelineOffset * pixelsPerSecond;
+    const clipLeft = visualOffset * pixelsPerSecond;
 
     return (
       <View
@@ -596,9 +710,58 @@ export function MultiTrackTimeline({
     );
   };
 
+  // ---- Render text overlay clips on timeline ----
+  const renderTextClip = (overlay: TextOverlay) => {
+    const isSelected = selectedTextId === overlay.id;
+    const startTime = overlay.startTime ?? 0;
+    const endTime = overlay.endTime ?? totalDuration;
+    const clipWidth = (endTime - startTime) * pixelsPerSecond;
+    const clipLeft = startTime * pixelsPerSecond;
+    const textColor = "#E879F9"; // Purple for text overlays
+
+    return (
+      <View
+        key={overlay.id}
+        style={[
+          st.textClipOuter,
+          {
+            left: clipLeft,
+            width: Math.max(clipWidth, 40),
+          },
+        ]}
+      >
+        <Pressable
+          onPress={() => onTextOverlaySelect?.(isSelected ? null : overlay.id)}
+          style={({ pressed }) => [
+            st.textClipBody,
+            {
+              backgroundColor: isSelected ? `${textColor}50` : `${textColor}20`,
+              borderColor: isSelected ? textColor : `${textColor}60`,
+            },
+            pressed && { opacity: 0.7 },
+          ]}
+        >
+          <View style={st.textClipContent}>
+            <IconSymbol name="textformat" size={10} color={textColor} />
+            <Text style={[st.textClipLabel, { color: textColor }]} numberOfLines={1}>
+              {overlay.text}
+            </Text>
+          </View>
+          <Text style={[st.textClipTime, { color: `${textColor}AA` }]}>
+            {formatTime(endTime - startTime)}
+          </Text>
+        </Pressable>
+      </View>
+    );
+  };
+
   const zoomLabel = secondsPerScreen < 10
     ? `${secondsPerScreen.toFixed(1)}s`
     : `${Math.round(secondsPerScreen)}s`;
+
+  // Separate video and audio tracks
+  const videoTracks = tracks.filter((t) => t.type === "video");
+  const audioTracks = tracks.filter((t) => t.type === "audio" || t.type === "bgm");
 
   return (
     <View style={[st.container, { backgroundColor: colors.surface, borderTopColor: colors.border }]}>
@@ -649,7 +812,7 @@ export function MultiTrackTimeline({
             <View
               style={[
                 st.playhead,
-                { left: 120 + currentTime * pixelsPerSecond },
+                { left: 120 + currentTime * pixelsPerSecond - 1 },
               ]}
               pointerEvents="none"
             >
@@ -665,7 +828,15 @@ export function MultiTrackTimeline({
             showsVerticalScrollIndicator={false}
             scrollEnabled={!activeDrag}
           >
-            {tracks.map((track) => (
+            {/* Video section label */}
+            {videoTracks.length > 0 && (
+              <View style={[st.sectionLabel, { borderBottomColor: colors.border }]}>
+                <Text style={[st.sectionLabelText, { color: colors.muted }]}>映像</Text>
+              </View>
+            )}
+
+            {/* Video tracks */}
+            {videoTracks.map((track) => (
               <View key={track.id} style={[st.trackRow, { borderBottomColor: colors.border }]}>
                 {/* Track header */}
                 <View style={[st.trackHeader, { backgroundColor: `${track.color}15`, borderRightColor: colors.border }]}>
@@ -676,37 +847,106 @@ export function MultiTrackTimeline({
                     </Text>
                   </View>
                   <View style={st.trackControls}>
-                    {track.type === "video" ? (
-                      <Pressable
-                        onPress={() => toggleVisibility(track.id)}
-                        style={({ pressed }) => [
-                          st.trackCtrlBtn,
-                          track.isHidden && { backgroundColor: `${colors.error}30` },
-                          pressed && { opacity: 0.6 },
-                        ]}
-                      >
-                        <IconSymbol
-                          name={track.isHidden ? "eye.slash" : "eye"}
-                          size={12}
-                          color={track.isHidden ? colors.error : colors.muted}
-                        />
+                    <Pressable
+                      onPress={() => toggleVisibility(track.id)}
+                      style={({ pressed }) => [
+                        st.trackCtrlBtn,
+                        track.isHidden && { backgroundColor: `${colors.error}30` },
+                        pressed && { opacity: 0.6 },
+                      ]}
+                    >
+                      <IconSymbol
+                        name={track.isHidden ? "eye.slash" : "eye"}
+                        size={12}
+                        color={track.isHidden ? colors.error : colors.muted}
+                      />
+                    </Pressable>
+                    <Pressable
+                      onPress={() => toggleSolo(track.id)}
+                      style={({ pressed }) => [
+                        st.trackCtrlBtn,
+                        track.isSolo && { backgroundColor: `${colors.warning}30` },
+                        pressed && { opacity: 0.6 },
+                      ]}
+                    >
+                      <Text style={{ fontSize: 10, fontWeight: "800", color: track.isSolo ? colors.warning : colors.muted }}>S</Text>
+                    </Pressable>
+                    <View style={st.volumeRow}>
+                      <Pressable onPress={() => adjustTrackVolume(track.id, -0.1)} style={({ pressed }) => [pressed && { opacity: 0.6 }]}>
+                        <Text style={{ color: colors.muted, fontSize: 12, fontWeight: "700" }}>−</Text>
                       </Pressable>
-                    ) : (
-                      <Pressable
-                        onPress={() => toggleMute(track.id)}
-                        style={({ pressed }) => [
-                          st.trackCtrlBtn,
-                          track.isMuted && { backgroundColor: `${colors.error}30` },
-                          pressed && { opacity: 0.6 },
-                        ]}
-                      >
-                        <IconSymbol
-                          name={track.isMuted ? "speaker.slash" : "speaker.wave.2"}
-                          size={12}
-                          color={track.isMuted ? colors.error : colors.muted}
-                        />
+                      <Text style={{ color: colors.foreground, fontSize: 10, fontWeight: "600", minWidth: 28, textAlign: "center" }}>
+                        {Math.round(track.volume * 100)}%
+                      </Text>
+                      <Pressable onPress={() => adjustTrackVolume(track.id, 0.1)} style={({ pressed }) => [pressed && { opacity: 0.6 }]}>
+                        <Text style={{ color: colors.muted, fontSize: 12, fontWeight: "700" }}>+</Text>
                       </Pressable>
-                    )}
+                    </View>
+                  </View>
+                </View>
+
+                {/* Track clips area */}
+                <View style={st.trackClipsArea}>
+                  {track.clips.map((clip) => renderClip(track, clip))}
+                  {track.clips.length === 0 && (
+                    <View style={st.emptyTrack}>
+                      <Text style={{ color: colors.muted, fontSize: 11 }}>空のトラック</Text>
+                    </View>
+                  )}
+                </View>
+              </View>
+            ))}
+
+            {/* Text overlays row (under video section) */}
+            {textOverlays.length > 0 && (
+              <View style={[st.trackRow, { borderBottomColor: colors.border }]}>
+                <View style={[st.trackHeader, { backgroundColor: "rgba(232,121,249,0.08)", borderRightColor: colors.border }]}>
+                  <View style={st.trackLabelRow}>
+                    <IconSymbol name="textformat" size={14} color="#E879F9" />
+                    <Text style={[st.trackLabel, { color: colors.foreground }]} numberOfLines={1}>
+                      テキスト
+                    </Text>
+                  </View>
+                </View>
+                <View style={st.trackClipsArea}>
+                  {textOverlays.map((overlay) => renderTextClip(overlay))}
+                </View>
+              </View>
+            )}
+
+            {/* Audio section label */}
+            {audioTracks.length > 0 && (
+              <View style={[st.sectionLabel, { borderBottomColor: colors.border }]}>
+                <Text style={[st.sectionLabelText, { color: colors.muted }]}>音声</Text>
+              </View>
+            )}
+
+            {/* Audio tracks */}
+            {audioTracks.map((track) => (
+              <View key={track.id} style={[st.trackRow, { borderBottomColor: colors.border }]}>
+                {/* Track header */}
+                <View style={[st.trackHeader, { backgroundColor: `${track.color}15`, borderRightColor: colors.border }]}>
+                  <View style={st.trackLabelRow}>
+                    <IconSymbol name={getTrackIcon(track.type)} size={14} color={track.color} />
+                    <Text style={[st.trackLabel, { color: colors.foreground }]} numberOfLines={1}>
+                      {track.label}
+                    </Text>
+                  </View>
+                  <View style={st.trackControls}>
+                    <Pressable
+                      onPress={() => toggleMute(track.id)}
+                      style={({ pressed }) => [
+                        st.trackCtrlBtn,
+                        track.isMuted && { backgroundColor: `${colors.error}30` },
+                        pressed && { opacity: 0.6 },
+                      ]}
+                    >
+                      <IconSymbol
+                        name={track.isMuted ? "speaker.slash" : "speaker.wave.2"}
+                        size={12}
+                        color={track.isMuted ? colors.error : colors.muted}
+                      />
+                    </Pressable>
                     <Pressable
                       onPress={() => toggleSolo(track.id)}
                       style={({ pressed }) => [
@@ -755,6 +995,12 @@ export function MultiTrackTimeline({
           if (c) { selectedTrack = t; selectedClip = c; break; }
         }
         if (!selectedTrack || !selectedClip) return null;
+
+        // Check if playhead is within this clip for split
+        const clipStart = selectedClip.timelineOffset;
+        const clipEnd = selectedClip.timelineOffset + ((selectedClip.trimEnd - selectedClip.trimStart) / selectedClip.speed);
+        const canSplit = currentTime > clipStart && currentTime < clipEnd;
+
         return (
           <View style={[st.clipControls, { backgroundColor: colors.background, borderTopColor: colors.border }]}>
             <View style={st.clipControlsHeader}>
@@ -764,13 +1010,50 @@ export function MultiTrackTimeline({
                   {selectedClip.name}
                 </Text>
               </View>
-              <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+              <View style={{ flexDirection: "row", gap: 6, alignItems: "center" }}>
+                {/* Split button */}
+                {canSplit && (
+                  <Pressable
+                    onPress={() => splitClipAtPlayhead(selectedTrack!.id, selectedClip!.id)}
+                    style={({ pressed }) => [st.actionBtn, { backgroundColor: `${colors.primary}15`, borderColor: colors.primary }, pressed && { opacity: 0.7 }]}
+                  >
+                    <IconSymbol name="divide" size={11} color={colors.primary} />
+                    <Text style={{ color: colors.primary, fontSize: 9, fontWeight: "600" }}>分割</Text>
+                  </Pressable>
+                )}
+                {/* Cut button */}
+                <Pressable
+                  onPress={() => cutClip(selectedTrack!.id, selectedClip!.id)}
+                  style={({ pressed }) => [st.actionBtn, { backgroundColor: `${colors.warning}15`, borderColor: colors.warning }, pressed && { opacity: 0.7 }]}
+                >
+                  <IconSymbol name="scissors" size={11} color={colors.warning} />
+                  <Text style={{ color: colors.warning, fontSize: 9, fontWeight: "600" }}>カット</Text>
+                </Pressable>
+                {/* Copy button */}
+                <Pressable
+                  onPress={() => copyClip(selectedTrack!.id, selectedClip!.id)}
+                  style={({ pressed }) => [st.actionBtn, { backgroundColor: `${colors.muted}15`, borderColor: colors.muted }, pressed && { opacity: 0.7 }]}
+                >
+                  <IconSymbol name="doc.on.doc" size={11} color={colors.muted} />
+                  <Text style={{ color: colors.muted, fontSize: 9, fontWeight: "600" }}>コピー</Text>
+                </Pressable>
+                {/* Paste button */}
+                {clipboard && (
+                  <Pressable
+                    onPress={() => pasteClip(selectedTrack!.id)}
+                    style={({ pressed }) => [st.actionBtn, { backgroundColor: `${colors.success}15`, borderColor: colors.success }, pressed && { opacity: 0.7 }]}
+                  >
+                    <IconSymbol name="doc.on.clipboard" size={11} color={colors.success} />
+                    <Text style={{ color: colors.success, fontSize: 9, fontWeight: "600" }}>ペースト</Text>
+                  </Pressable>
+                )}
+                {/* Delete button */}
                 <Pressable
                   onPress={() => removeTrack(selectedTrack!.id)}
-                  style={({ pressed }) => [st.deleteBtn, { backgroundColor: `${colors.error}15`, borderColor: colors.error }, pressed && { opacity: 0.7 }]}
+                  style={({ pressed }) => [st.actionBtn, { backgroundColor: `${colors.error}15`, borderColor: colors.error }, pressed && { opacity: 0.7 }]}
                 >
-                  <IconSymbol name="trash" size={12} color={colors.error} />
-                  <Text style={{ color: colors.error, fontSize: 10, fontWeight: "600" }}>削除</Text>
+                  <IconSymbol name="trash" size={11} color={colors.error} />
+                  <Text style={{ color: colors.error, fontSize: 9, fontWeight: "600" }}>削除</Text>
                 </Pressable>
                 <Pressable onPress={() => onClipSelect?.("", "")} style={({ pressed }) => [pressed && { opacity: 0.6 }]}>
                   <IconSymbol name="xmark" size={16} color={colors.muted} />
@@ -894,7 +1177,7 @@ const st = StyleSheet.create({
     textAlign: "center",
   },
   scrollH: {
-    maxHeight: 260,
+    maxHeight: 320,
   },
   ruler: {
     height: 28,
@@ -924,8 +1207,19 @@ const st = StyleSheet.create({
     fontSize: 8,
     fontWeight: "500",
   },
+  sectionLabel: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderBottomWidth: 0.5,
+  },
+  sectionLabelText: {
+    fontSize: 9,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 1,
+  },
   tracksScroll: {
-    maxHeight: 232,
+    maxHeight: 290,
   },
   trackRow: {
     flexDirection: "row",
@@ -1066,6 +1360,37 @@ const st = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  // Text overlay clips
+  textClipOuter: {
+    position: "absolute",
+    top: 4,
+    bottom: 4,
+  },
+  textClipBody: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    justifyContent: "center",
+    borderStyle: "dashed",
+  },
+  textClipContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+  },
+  textClipLabel: {
+    fontSize: 9,
+    fontWeight: "600",
+    flex: 1,
+  },
+  textClipTime: {
+    fontSize: 8,
+    fontWeight: "500",
+    marginTop: 1,
+  },
+  // Clip controls
   clipControls: {
     padding: 10,
     borderTopWidth: 0.5,
@@ -1084,15 +1409,15 @@ const st = StyleSheet.create({
   clipControlsTitle: {
     fontSize: 13,
     fontWeight: "600",
-    maxWidth: 200,
+    maxWidth: 120,
   },
-  deleteBtn: {
+  actionBtn: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
+    gap: 3,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 5,
     borderWidth: 1,
   },
   clipControlsRow: {
@@ -1141,7 +1466,7 @@ const st = StyleSheet.create({
     borderRadius: 8,
     borderWidth: 1,
   },
-  // Playhead styles
+  // Playhead styles - YELLOW
   playhead: {
     position: "absolute",
     top: 0,
@@ -1151,16 +1476,15 @@ const st = StyleSheet.create({
     alignItems: "center",
   },
   playheadHead: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: "#FF3B30",
-    marginTop: 2,
-    marginLeft: -4,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: PLAYHEAD_COLOR,
+    marginTop: 1,
   },
   playheadLine: {
     width: 2,
     flex: 1,
-    backgroundColor: "#FF3B30",
+    backgroundColor: PLAYHEAD_COLOR,
   },
 });
