@@ -2,13 +2,21 @@ import { describe, it, expect } from "vitest";
 import { createDefaultTracks } from "../lib/editor-context";
 import type { TimelineTrack, TimelineClip } from "../lib/editor-context";
 
-// Helper: simulate trim-left logic (same as component)
+// Helper: simulate trim-left logic with timelineOffset adjustment (same as component)
 function applyTrimLeft(clip: TimelineClip, deltaSec: number): TimelineClip {
   const maxDelta = clip.trimEnd - clip.trimStart - 0.5;
   const minDelta = -clip.trimStart;
   const clamped = Math.max(minDelta, Math.min(maxDelta, deltaSec));
   const newTrimStart = Math.max(0, Math.min(clip.trimEnd - 0.5, clip.trimStart + clamped));
-  return { ...clip, trimStart: newTrimStart };
+  // When left-trimming, shift timelineOffset by the amount trimmed
+  const trimDelta = newTrimStart - clip.trimStart;
+  const newOffset = Math.max(0, clip.timelineOffset + (trimDelta / clip.speed));
+  return { ...clip, trimStart: newTrimStart, timelineOffset: newOffset };
+}
+
+// Helper: calculate playhead timeline position from video playback time
+function calcPlayheadPosition(clip: TimelineClip, currentTime: number): number {
+  return clip.timelineOffset + ((currentTime - clip.trimStart) / (clip.speed || 1));
 }
 
 // Helper: simulate trim-right logic (same as component)
@@ -242,6 +250,120 @@ describe("Clip visual width calculation", () => {
     const clipWidth = ((clip.trimEnd - clip.trimStart) / clip.speed) * pixelsPerSecond;
     const displayWidth = Math.max(clipWidth, 30);
     expect(displayWidth).toBe(30);
+  });
+});
+
+describe("Left trim offset adjustment", () => {
+  it("should shift timelineOffset forward when left-trimming at speed 1x", () => {
+    const clip: TimelineClip = {
+      id: "c1", sourceUri: "file:///test.mp4", name: "Test",
+      duration: 60, trimStart: 10, trimEnd: 50,
+      timelineOffset: 0, speed: 1.0, volume: 1.0,
+    };
+    const result = applyTrimLeft(clip, 5);
+    expect(result.trimStart).toBe(15);
+    expect(result.timelineOffset).toBe(5); // shifted by 5s / 1.0x = 5s
+  });
+
+  it("should shift timelineOffset correctly at 2x speed", () => {
+    const clip: TimelineClip = {
+      id: "c1", sourceUri: "file:///test.mp4", name: "Test",
+      duration: 60, trimStart: 10, trimEnd: 50,
+      timelineOffset: 0, speed: 2.0, volume: 1.0,
+    };
+    const result = applyTrimLeft(clip, 10);
+    expect(result.trimStart).toBe(20);
+    expect(result.timelineOffset).toBe(5); // shifted by 10s / 2.0x = 5s
+  });
+
+  it("should shift timelineOffset back when expanding left", () => {
+    const clip: TimelineClip = {
+      id: "c1", sourceUri: "file:///test.mp4", name: "Test",
+      duration: 60, trimStart: 10, trimEnd: 50,
+      timelineOffset: 10, speed: 1.0, volume: 1.0,
+    };
+    const result = applyTrimLeft(clip, -5);
+    expect(result.trimStart).toBe(5);
+    expect(result.timelineOffset).toBe(5); // shifted back by -5s / 1.0x = -5s
+  });
+
+  it("should not let timelineOffset go below 0", () => {
+    const clip: TimelineClip = {
+      id: "c1", sourceUri: "file:///test.mp4", name: "Test",
+      duration: 60, trimStart: 5, trimEnd: 50,
+      timelineOffset: 2, speed: 1.0, volume: 1.0,
+    };
+    const result = applyTrimLeft(clip, -10);
+    expect(result.trimStart).toBe(0);
+    expect(result.timelineOffset).toBe(0); // clamped to 0
+  });
+
+  it("should preserve existing timelineOffset when left-trimming", () => {
+    const clip: TimelineClip = {
+      id: "c1", sourceUri: "file:///test.mp4", name: "Test",
+      duration: 60, trimStart: 10, trimEnd: 50,
+      timelineOffset: 20, speed: 1.0, volume: 1.0,
+    };
+    const result = applyTrimLeft(clip, 5);
+    expect(result.trimStart).toBe(15);
+    expect(result.timelineOffset).toBe(25); // 20 + 5 = 25
+  });
+});
+
+describe("Playhead position calculation", () => {
+  it("should calculate playhead at start of clip", () => {
+    const clip: TimelineClip = {
+      id: "c1", sourceUri: "file:///test.mp4", name: "Test",
+      duration: 60, trimStart: 10, trimEnd: 50,
+      timelineOffset: 0, speed: 1.0, volume: 1.0,
+    };
+    const pos = calcPlayheadPosition(clip, 10);
+    expect(pos).toBe(0); // at trimStart, offset 0
+  });
+
+  it("should calculate playhead mid-clip", () => {
+    const clip: TimelineClip = {
+      id: "c1", sourceUri: "file:///test.mp4", name: "Test",
+      duration: 60, trimStart: 10, trimEnd: 50,
+      timelineOffset: 0, speed: 1.0, volume: 1.0,
+    };
+    const pos = calcPlayheadPosition(clip, 30);
+    expect(pos).toBe(20); // 0 + (30 - 10) / 1.0 = 20
+  });
+
+  it("should account for speed in playhead position", () => {
+    const clip: TimelineClip = {
+      id: "c1", sourceUri: "file:///test.mp4", name: "Test",
+      duration: 60, trimStart: 10, trimEnd: 50,
+      timelineOffset: 0, speed: 2.0, volume: 1.0,
+    };
+    const pos = calcPlayheadPosition(clip, 30);
+    expect(pos).toBe(10); // 0 + (30 - 10) / 2.0 = 10
+  });
+
+  it("should account for timelineOffset in playhead position", () => {
+    const clip: TimelineClip = {
+      id: "c1", sourceUri: "file:///test.mp4", name: "Test",
+      duration: 60, trimStart: 10, trimEnd: 50,
+      timelineOffset: 5, speed: 1.0, volume: 1.0,
+    };
+    const pos = calcPlayheadPosition(clip, 10);
+    expect(pos).toBe(5); // 5 + (10 - 10) / 1.0 = 5
+  });
+
+  it("should work correctly after left trim with offset adjustment", () => {
+    const clip: TimelineClip = {
+      id: "c1", sourceUri: "file:///test.mp4", name: "Test",
+      duration: 60, trimStart: 10, trimEnd: 50,
+      timelineOffset: 0, speed: 1.0, volume: 1.0,
+    };
+    // Trim left by 5 seconds
+    const trimmed = applyTrimLeft(clip, 5);
+    expect(trimmed.trimStart).toBe(15);
+    expect(trimmed.timelineOffset).toBe(5);
+    // Playhead at new trimStart should be at timelineOffset
+    const pos = calcPlayheadPosition(trimmed, 15);
+    expect(pos).toBe(5); // 5 + (15 - 15) / 1.0 = 5
   });
 });
 

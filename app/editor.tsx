@@ -135,6 +135,9 @@ export default function EditorScreen() {
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
   const [isFullscreenPreview, setIsFullscreenPreview] = useState(false);
 
+  // Current playback position for timeline playhead
+  const [currentPlaybackTime, setCurrentPlaybackTime] = useState(0);
+
   // Helper: sync legacy state changes to the first video track clip in tracks
   const syncToVideoTrack = useCallback((updates: { speed?: number; trimStart?: number; trimEnd?: number }) => {
     setTracks((prev) => {
@@ -353,30 +356,40 @@ export default function EditorScreen() {
     }
   }, [player, effectivePlayerState.trimStart, getWebVideoElement]);
 
-  // Enforce trim boundaries during playback
+  // Enforce trim boundaries during playback & update playhead position
   useEffect(() => {
-    if (!player || !isPlaying) return;
+    if (!player) return;
     const interval = setInterval(() => {
       try {
         let currentTime = player.currentTime;
-        // On Web, also check DOM video element
         const videoEl = getWebVideoElement();
         if (videoEl && Platform.OS === "web") {
           currentTime = videoEl.currentTime;
         }
-        if (currentTime >= effectivePlayerState.trimEnd) {
-          player.currentTime = effectivePlayerState.trimStart;
-          if (videoEl) videoEl.currentTime = effectivePlayerState.trimStart;
-        } else if (currentTime < effectivePlayerState.trimStart) {
-          player.currentTime = effectivePlayerState.trimStart;
-          if (videoEl) videoEl.currentTime = effectivePlayerState.trimStart;
+        // Update playhead position (relative to timeline: account for timelineOffset)
+        const videoTrack = tracks.find((t) => t.type === "video" && !t.isHidden);
+        const videoClip = videoTrack?.clips[0];
+        const timelinePos = videoClip
+          ? videoClip.timelineOffset + ((currentTime - videoClip.trimStart) / (videoClip.speed || 1))
+          : currentTime;
+        setCurrentPlaybackTime(Math.max(0, timelinePos));
+
+        // Enforce trim boundaries only while playing
+        if (isPlaying) {
+          if (currentTime >= effectivePlayerState.trimEnd) {
+            player.currentTime = effectivePlayerState.trimStart;
+            if (videoEl) videoEl.currentTime = effectivePlayerState.trimStart;
+          } else if (currentTime < effectivePlayerState.trimStart) {
+            player.currentTime = effectivePlayerState.trimStart;
+            if (videoEl) videoEl.currentTime = effectivePlayerState.trimStart;
+          }
         }
       } catch (e) {
         // ignore
       }
-    }, 200);
+    }, 100);
     return () => clearInterval(interval);
-  }, [player, isPlaying, effectivePlayerState.trimStart, effectivePlayerState.trimEnd, getWebVideoElement]);
+  }, [player, isPlaying, effectivePlayerState.trimStart, effectivePlayerState.trimEnd, getWebVideoElement, tracks]);
 
   // Also sync the legacy speed state with track speed
   useEffect(() => {
@@ -1890,6 +1903,7 @@ export default function EditorScreen() {
                 <MultiTrackTimeline
                   tracks={tracks}
                   totalDuration={project.duration}
+                  currentTime={currentPlaybackTime}
                    onTracksChange={(newTracks) => {
                      setTracks(newTracks);
                      // Sync multi-track changes back to legacy state
@@ -1984,6 +1998,7 @@ export default function EditorScreen() {
             <MultiTrackTimeline
               tracks={tracks}
               totalDuration={project.duration}
+              currentTime={currentPlaybackTime}
               onTracksChange={(newTracks) => {
                 setTracks(newTracks);
                 // Sync multi-track changes back to legacy state

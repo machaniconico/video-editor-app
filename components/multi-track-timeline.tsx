@@ -28,6 +28,8 @@ interface MultiTrackTimelineProps {
   onClipSelect?: (trackId: string, clipId: string) => void;
   selectedClipId?: string | null;
   isLandscape?: boolean;
+  /** Current playback position in seconds (for playhead display) */
+  currentTime?: number;
 }
 
 // Zoom: continuous seconds-per-screen (not discrete levels)
@@ -59,6 +61,7 @@ export function MultiTrackTimeline({
   onClipSelect,
   selectedClipId,
   isLandscape = false,
+  currentTime = 0,
 }: MultiTrackTimelineProps) {
   const colors = useColors();
   const [secondsPerScreen, setSecondsPerScreen] = useState(30);
@@ -315,7 +318,10 @@ export function MultiTrackTimeline({
           if (c.id !== drag.clipId) return c;
           if (drag.mode === "trim-left") {
             const newTrimStart = Math.max(0, Math.min(c.trimEnd - 0.5, drag.originalClip.trimStart + trimLeftDelta));
-            return { ...c, trimStart: newTrimStart };
+            // When left-trimming, shift timelineOffset by the amount trimmed
+            const trimDelta = newTrimStart - drag.originalClip.trimStart;
+            const newOffset = Math.max(0, drag.originalClip.timelineOffset + (trimDelta / c.speed));
+            return { ...c, trimStart: newTrimStart, timelineOffset: newOffset };
           } else {
             const newTrimEnd = Math.max(c.trimStart + 0.5, Math.min(drag.originalClip.duration, drag.originalClip.trimEnd + trimRightDelta));
             return { ...c, trimEnd: newTrimEnd };
@@ -637,6 +643,20 @@ export function MultiTrackTimeline({
               <Text style={[st.pinchHintText, { color: `${colors.muted}80` }]}>⇔ ピンチでズーム</Text>
             </View>
           </View>
+
+          {/* Playhead line (spans ruler + all tracks) */}
+          {currentTime >= 0 && currentTime <= totalDuration && (
+            <View
+              style={[
+                st.playhead,
+                { left: 120 + currentTime * pixelsPerSecond },
+              ]}
+              pointerEvents="none"
+            >
+              <View style={st.playheadHead} />
+              <View style={st.playheadLine} />
+            </View>
+          )}
 
           {/* Tracks */}
           <ScrollView
@@ -1120,5 +1140,27 @@ const st = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 8,
     borderWidth: 1,
+  },
+  // Playhead styles
+  playhead: {
+    position: "absolute",
+    top: 0,
+    bottom: 0,
+    width: 2,
+    zIndex: 50,
+    alignItems: "center",
+  },
+  playheadHead: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: "#FF3B30",
+    marginTop: 2,
+    marginLeft: -4,
+  },
+  playheadLine: {
+    width: 2,
+    flex: 1,
+    backgroundColor: "#FF3B30",
   },
 });
