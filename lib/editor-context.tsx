@@ -107,11 +107,17 @@ export interface VideoProject {
   tracks: TimelineTrack[];
 }
 
+const MAX_HISTORY = 50;
+
 interface EditorState {
   projects: VideoProject[];
   currentProject: VideoProject | null;
   isLoading: boolean;
   activePanel: "none" | "trim" | "filter" | "text" | "music" | "speed";
+  /** Undo stack – past snapshots of currentProject */
+  past: VideoProject[];
+  /** Redo stack – future snapshots of currentProject */
+  future: VideoProject[];
 }
 
 type EditorAction =
@@ -121,13 +127,17 @@ type EditorAction =
   | { type: "ADD_PROJECT"; payload: VideoProject }
   | { type: "DELETE_PROJECT"; payload: string }
   | { type: "SET_LOADING"; payload: boolean }
-  | { type: "SET_ACTIVE_PANEL"; payload: EditorState["activePanel"] };
+  | { type: "SET_ACTIVE_PANEL"; payload: EditorState["activePanel"] }
+  | { type: "UNDO" }
+  | { type: "REDO" };
 
 const initialState: EditorState = {
   projects: [],
   currentProject: null,
   isLoading: false,
   activePanel: "none",
+  past: [],
+  future: [],
 };
 
 function editorReducer(state: EditorState, action: EditorAction): EditorState {
@@ -135,15 +145,19 @@ function editorReducer(state: EditorState, action: EditorAction): EditorState {
     case "SET_PROJECTS":
       return { ...state, projects: action.payload };
     case "SET_CURRENT_PROJECT":
-      return { ...state, currentProject: action.payload };
-    case "UPDATE_CURRENT_PROJECT":
+      return { ...state, currentProject: action.payload, past: [], future: [] };
+    case "UPDATE_CURRENT_PROJECT": {
       if (!state.currentProject) return state;
       const updated = { ...state.currentProject, ...action.payload, updatedAt: new Date().toISOString() };
+      const newPast = [...state.past, state.currentProject].slice(-MAX_HISTORY);
       return {
         ...state,
         currentProject: updated,
         projects: state.projects.map((p) => (p.id === updated.id ? updated : p)),
+        past: newPast,
+        future: [],
       };
+    }
     case "ADD_PROJECT":
       return { ...state, projects: [action.payload, ...state.projects] };
     case "DELETE_PROJECT":
@@ -156,6 +170,30 @@ function editorReducer(state: EditorState, action: EditorAction): EditorState {
       return { ...state, isLoading: action.payload };
     case "SET_ACTIVE_PANEL":
       return { ...state, activePanel: action.payload };
+    case "UNDO": {
+      if (state.past.length === 0 || !state.currentProject) return state;
+      const previous = state.past[state.past.length - 1];
+      const newPast = state.past.slice(0, -1);
+      return {
+        ...state,
+        currentProject: previous,
+        projects: state.projects.map((p) => (p.id === previous.id ? previous : p)),
+        past: newPast,
+        future: [state.currentProject, ...state.future].slice(0, MAX_HISTORY),
+      };
+    }
+    case "REDO": {
+      if (state.future.length === 0 || !state.currentProject) return state;
+      const next = state.future[0];
+      const newFuture = state.future.slice(1);
+      return {
+        ...state,
+        currentProject: next,
+        projects: state.projects.map((p) => (p.id === next.id ? next : p)),
+        past: [...state.past, state.currentProject].slice(-MAX_HISTORY),
+        future: newFuture,
+      };
+    }
     default:
       return state;
   }
@@ -231,6 +269,10 @@ interface EditorContextType {
   loadProjects: () => Promise<void>;
   saveProjects: (projects: VideoProject[]) => Promise<void>;
   createProject: (videoUri: string, duration: number, thumbnailUri: string | null) => VideoProject;
+  undo: () => void;
+  redo: () => void;
+  canUndo: boolean;
+  canRedo: boolean;
 }
 
 const EditorContext = createContext<EditorContextType | null>(null);
@@ -263,6 +305,11 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  const undo = useCallback(() => dispatch({ type: "UNDO" }), []);
+  const redo = useCallback(() => dispatch({ type: "REDO" }), []);
+  const canUndo = state.past.length > 0;
+  const canRedo = state.future.length > 0;
+
   const createProject = useCallback(
     (videoUri: string, duration: number, thumbnailUri: string | null): VideoProject => {
       const now = new Date().toISOString();
@@ -293,7 +340,7 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <EditorContext.Provider value={{ state, dispatch, loadProjects, saveProjects, createProject }}>
+    <EditorContext.Provider value={{ state, dispatch, loadProjects, saveProjects, createProject, undo, redo, canUndo, canRedo }}>
       {children}
     </EditorContext.Provider>
   );

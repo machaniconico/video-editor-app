@@ -101,7 +101,7 @@ const FONT_SIZES = [14, 18, 24, 32, 40, 56];
 export default function EditorScreen() {
   const colors = useColors();
   const router = useRouter();
-  const { state, dispatch } = useEditor();
+  const { state, dispatch, undo, redo, canUndo, canRedo } = useEditor();
   const project = state.currentProject;
   const { orientation, dimensions } = useOrientation();
   const isLandscape = orientation === "landscape";
@@ -1883,6 +1883,22 @@ export default function EditorScreen() {
               {project.title}
             </Text>
             {renderOrientationBadge()}
+            <View style={styles.undoRedoGroup}>
+              <Pressable
+                onPress={undo}
+                disabled={!canUndo}
+                style={({ pressed }) => [styles.topBarBtn, pressed && { opacity: 0.6 }]}
+              >
+                <IconSymbol name="arrow.uturn.backward" size={18} color={canUndo ? colors.foreground : colors.muted} />
+              </Pressable>
+              <Pressable
+                onPress={redo}
+                disabled={!canRedo}
+                style={({ pressed }) => [styles.topBarBtn, pressed && { opacity: 0.6 }]}
+              >
+                <IconSymbol name="arrow.uturn.forward" size={18} color={canRedo ? colors.foreground : colors.muted} />
+              </Pressable>
+            </View>
             <Pressable
               onPress={goToExport}
               style={({ pressed }) => [
@@ -1980,6 +1996,22 @@ export default function EditorScreen() {
           >
             {project.title}
           </Text>
+          <View style={styles.undoRedoGroup}>
+            <Pressable
+              onPress={undo}
+              disabled={!canUndo}
+              style={({ pressed }) => [styles.topBarBtn, pressed && { opacity: 0.6 }]}
+            >
+              <IconSymbol name="arrow.uturn.backward" size={20} color={canUndo ? colors.foreground : colors.muted} />
+            </Pressable>
+            <Pressable
+              onPress={redo}
+              disabled={!canRedo}
+              style={({ pressed }) => [styles.topBarBtn, pressed && { opacity: 0.6 }]}
+            >
+              <IconSymbol name="arrow.uturn.forward" size={20} color={canRedo ? colors.foreground : colors.muted} />
+            </Pressable>
+          </View>
           <Pressable
             onPress={goToExport}
             style={({ pressed }) => [
@@ -2054,6 +2086,11 @@ const styles = StyleSheet.create({
   },
   topBarBtn: {
     padding: 4,
+  },
+  undoRedoGroup: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
   },
   topBarTitle: {
     flex: 1,
