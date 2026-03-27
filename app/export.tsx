@@ -372,18 +372,34 @@ export default function ExportScreen() {
             <Text style={[styles.completeHint, { color: colors.muted }]}>
               カメラロールに保存されました
             </Text>
+
+            {/* SNS Share buttons */}
+            <Text style={{ color: colors.muted, fontSize: 13, fontWeight: "600", alignSelf: "flex-start", marginBottom: 8, width: "100%" }}>
+              SNSに共有
+            </Text>
+            <View style={styles.snsRow}>
+              {[
+                { label: "TikTok", icon: "play.rectangle.fill", color: "#000000" },
+                { label: "Instagram", icon: "camera.fill", color: "#E1306C" },
+                { label: "YouTube", icon: "play.rectangle.fill", color: "#FF0000" },
+                { label: "その他", icon: "square.and.arrow.up", color: colors.primary },
+              ].map((sns) => (
+                <Pressable
+                  key={sns.label}
+                  onPress={handleShare}
+                  style={({ pressed }) => [
+                    styles.snsBtn,
+                    { backgroundColor: sns.color },
+                    pressed && { opacity: 0.8, transform: [{ scale: 0.95 }] },
+                  ]}
+                >
+                  <IconSymbol name={sns.icon as any} size={18} color="#FFFFFF" />
+                  <Text style={{ color: "#FFFFFF", fontSize: 11, fontWeight: "600", marginTop: 2 }}>{sns.label}</Text>
+                </Pressable>
+              ))}
+            </View>
+
             <View style={styles.completeActions}>
-              <Pressable
-                onPress={handleShare}
-                style={({ pressed }) => [
-                  styles.actionBtn,
-                  { backgroundColor: colors.primary },
-                  pressed && { transform: [{ scale: 0.97 }], opacity: 0.9 },
-                ]}
-              >
-                <IconSymbol name="square.and.arrow.up" size={20} color="#FFFFFF" />
-                <Text style={styles.actionBtnText}>共有</Text>
-              </Pressable>
               <Pressable
                 onPress={handleDone}
                 style={({ pressed }) => [
@@ -602,5 +618,19 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontSize: 16,
     fontWeight: "700",
+  },
+  snsRow: {
+    flexDirection: "row",
+    gap: 10,
+    width: "100%",
+    marginBottom: 16,
+  },
+  snsBtn: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 12,
+    borderRadius: 12,
+    gap: 2,
   },
 });

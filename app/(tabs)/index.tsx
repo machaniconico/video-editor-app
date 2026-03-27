@@ -73,6 +73,26 @@ export default function HomeScreen() {
     router.push("/editor" as any);
   }, [pendingVideo, createProject, router, saveProjects, state.projects]);
 
+  const duplicateProject = useCallback(
+    async (proj: VideoProject) => {
+      if (Platform.OS !== "web") {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      }
+      const now = new Date().toISOString();
+      const duplicate: VideoProject = {
+        ...proj,
+        id: `proj_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        title: `${proj.title} (コピー)`,
+        createdAt: now,
+        updatedAt: now,
+      };
+      dispatch({ type: "ADD_PROJECT", payload: duplicate });
+      const updatedProjects = [duplicate, ...state.projects];
+      await saveProjects(updatedProjects);
+    },
+    [dispatch, saveProjects, state.projects]
+  );
+
   const openProject = useCallback(
     (project: VideoProject) => {
       if (Platform.OS !== "web") {
@@ -170,6 +190,15 @@ export default function HomeScreen() {
             {formatDuration(item.duration)} · {formatDate(item.updatedAt)}
           </Text>
         </View>
+        <Pressable
+          onPress={(e) => {
+            e.stopPropagation?.();
+            duplicateProject(item);
+          }}
+          style={({ pressed }) => [styles.duplicateBtn, pressed && { opacity: 0.6 }]}
+        >
+          <IconSymbol name="doc.on.doc" size={16} color={colors.muted} />
+        </Pressable>
         <View style={styles.swipeHint}>
           <IconSymbol name="chevron.right" size={20} color={colors.muted} />
         </View>
@@ -456,6 +485,10 @@ const styles = StyleSheet.create({
   projectMeta: {
     fontSize: 13,
     marginTop: 2,
+  },
+  duplicateBtn: {
+    padding: 8,
+    marginRight: 4,
   },
   swipeHint: {
     paddingLeft: 8,
