@@ -587,17 +587,31 @@ export default function EditorScreen() {
           pointerEvents="none"
         />
       )}
-      {/* Text overlays - free positioned */}
+      {/* Text overlays - free positioned, draggable */}
       {textOverlays.map((overlay) => (
-        <Pressable
+        <View
           key={overlay.id}
-          onPress={() => {
+          onStartShouldSetResponder={() => true}
+          onMoveShouldSetResponder={() => true}
+          onResponderGrant={() => {
             setSelectedTextId(overlay.id);
             setTextInput(overlay.text);
             setTextColor(overlay.color);
             setTextSize(overlay.fontSize);
             setTextPosition(overlay.position);
             if (activePanel !== "text") openPanel("text");
+          }}
+          onResponderMove={(evt) => {
+            const { locationX, locationY } = evt.nativeEvent;
+            // Move relative to touch delta
+            const dx = (locationX - 20) * 0.3;
+            const dy = (locationY - 20) * 0.3;
+            const newX = Math.max(0, Math.min(100, overlay.x + dx));
+            const newY = Math.max(0, Math.min(100, overlay.y + dy));
+            updateSelectedText({ x: Math.round(newX * 10) / 10, y: Math.round(newY * 10) / 10 });
+          }}
+          onResponderRelease={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
           }}
           style={[
             styles.freeTextOverlay,
@@ -645,7 +659,7 @@ export default function EditorScreen() {
           >
             {overlay.text}
           </Text>
-        </Pressable>
+        </View>
       ))}
       {/* Legacy single text overlay for backward compat */}
       {textOverlays.length === 0 && textInput.trim() !== "" && (
@@ -1657,66 +1671,168 @@ export default function EditorScreen() {
               </View>
             </ScrollView>
 
-            {/* Position controls */}
-            <Text style={[styles.subLabel, { color: colors.muted }]}>位置調整</Text>
-            <View style={{ flexDirection: "row", gap: 8, marginBottom: 10 }}>
-              <View style={{ flex: 1 }}>
-                <Text style={{ color: colors.muted, fontSize: 11, marginBottom: 4 }}>X: {Math.round(selectedOverlay.x)}%</Text>
-                <View style={{ flexDirection: "row", gap: 4 }}>
-                  <Pressable
-                    onPress={() => updateSelectedText({ x: Math.max(0, selectedOverlay.x - 5) })}
-                    style={({ pressed }) => [styles.trimBtn, { backgroundColor: colors.border, flex: 1 }, pressed && { opacity: 0.6 }]}
-                  >
-                    <Text style={{ color: colors.foreground, fontWeight: "700", fontSize: 12 }}>-5</Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={() => updateSelectedText({ x: Math.min(100, selectedOverlay.x + 5) })}
-                    style={({ pressed }) => [styles.trimBtn, { backgroundColor: colors.border, flex: 1 }, pressed && { opacity: 0.6 }]}
-                  >
-                    <Text style={{ color: colors.foreground, fontWeight: "700", fontSize: 12 }}>+5</Text>
-                  </Pressable>
-                </View>
+            {/* Position controls with slider + fine buttons + number input */}
+            <Text style={[styles.subLabel, { color: colors.muted }]}>位置調整（プレビュー上でドラッグも可能）</Text>
+
+            {/* X Position */}
+            <View style={styles.sliderRow}>
+              <Text style={[styles.sliderLabel, { color: colors.muted }]}>X</Text>
+              <Pressable onPress={() => updateSelectedText({ x: Math.max(0, selectedOverlay.x - 1) })} style={({ pressed }) => [styles.fineBtn, { backgroundColor: colors.border }, pressed && { opacity: 0.6 }]}>
+                <Text style={{ color: colors.foreground, fontSize: 14, fontWeight: "700" }}>−</Text>
+              </Pressable>
+              <View style={styles.sliderTrack}>
+                <View
+                  style={[styles.sliderFill, { width: `${selectedOverlay.x}%`, backgroundColor: colors.primary }]}
+                />
+                <View
+                  style={[styles.sliderThumb, { left: `${selectedOverlay.x}%`, backgroundColor: colors.primary }]}
+                  onStartShouldSetResponder={() => true}
+                  onMoveShouldSetResponder={() => true}
+                  onResponderMove={(evt) => {
+                    const touch = evt.nativeEvent;
+                    const parent = evt.nativeEvent.locationX;
+                    // Use pageX relative approach
+                    const newX = Math.max(0, Math.min(100, selectedOverlay.x + (touch.locationX - 10) * 0.5));
+                    updateSelectedText({ x: Math.round(newX * 10) / 10 });
+                  }}
+                />
               </View>
-              <View style={{ flex: 1 }}>
-                <Text style={{ color: colors.muted, fontSize: 11, marginBottom: 4 }}>Y: {Math.round(selectedOverlay.y)}%</Text>
-                <View style={{ flexDirection: "row", gap: 4 }}>
-                  <Pressable
-                    onPress={() => updateSelectedText({ y: Math.max(0, selectedOverlay.y - 5) })}
-                    style={({ pressed }) => [styles.trimBtn, { backgroundColor: colors.border, flex: 1 }, pressed && { opacity: 0.6 }]}
-                  >
-                    <Text style={{ color: colors.foreground, fontWeight: "700", fontSize: 12 }}>-5</Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={() => updateSelectedText({ y: Math.min(100, selectedOverlay.y + 5) })}
-                    style={({ pressed }) => [styles.trimBtn, { backgroundColor: colors.border, flex: 1 }, pressed && { opacity: 0.6 }]}
-                  >
-                    <Text style={{ color: colors.foreground, fontWeight: "700", fontSize: 12 }}>+5</Text>
-                  </Pressable>
-                </View>
+              <Pressable onPress={() => updateSelectedText({ x: Math.min(100, selectedOverlay.x + 1) })} style={({ pressed }) => [styles.fineBtn, { backgroundColor: colors.border }, pressed && { opacity: 0.6 }]}>
+                <Text style={{ color: colors.foreground, fontSize: 14, fontWeight: "700" }}>+</Text>
+              </Pressable>
+              <TextInput
+                value={String(Math.round(selectedOverlay.x * 10) / 10)}
+                onChangeText={(val) => {
+                  const n = parseFloat(val);
+                  if (!isNaN(n)) updateSelectedText({ x: Math.max(0, Math.min(100, n)) });
+                }}
+                keyboardType="numeric"
+                style={[styles.numberInput, { color: colors.foreground, borderColor: colors.border }]}
+              />
+              <Text style={{ color: colors.muted, fontSize: 11 }}>%</Text>
+            </View>
+
+            {/* Y Position */}
+            <View style={styles.sliderRow}>
+              <Text style={[styles.sliderLabel, { color: colors.muted }]}>Y</Text>
+              <Pressable onPress={() => updateSelectedText({ y: Math.max(0, selectedOverlay.y - 1) })} style={({ pressed }) => [styles.fineBtn, { backgroundColor: colors.border }, pressed && { opacity: 0.6 }]}>
+                <Text style={{ color: colors.foreground, fontSize: 14, fontWeight: "700" }}>−</Text>
+              </Pressable>
+              <View style={styles.sliderTrack}>
+                <View
+                  style={[styles.sliderFill, { width: `${selectedOverlay.y}%`, backgroundColor: colors.primary }]}
+                />
+                <View
+                  style={[styles.sliderThumb, { left: `${selectedOverlay.y}%`, backgroundColor: colors.primary }]}
+                  onStartShouldSetResponder={() => true}
+                  onMoveShouldSetResponder={() => true}
+                  onResponderMove={(evt) => {
+                    const touch = evt.nativeEvent;
+                    const newY = Math.max(0, Math.min(100, selectedOverlay.y + (touch.locationX - 10) * 0.5));
+                    updateSelectedText({ y: Math.round(newY * 10) / 10 });
+                  }}
+                />
               </View>
+              <Pressable onPress={() => updateSelectedText({ y: Math.min(100, selectedOverlay.y + 1) })} style={({ pressed }) => [styles.fineBtn, { backgroundColor: colors.border }, pressed && { opacity: 0.6 }]}>
+                <Text style={{ color: colors.foreground, fontSize: 14, fontWeight: "700" }}>+</Text>
+              </Pressable>
+              <TextInput
+                value={String(Math.round(selectedOverlay.y * 10) / 10)}
+                onChangeText={(val) => {
+                  const n = parseFloat(val);
+                  if (!isNaN(n)) updateSelectedText({ y: Math.max(0, Math.min(100, n)) });
+                }}
+                keyboardType="numeric"
+                style={[styles.numberInput, { color: colors.foreground, borderColor: colors.border }]}
+              />
+              <Text style={{ color: colors.muted, fontSize: 11 }}>%</Text>
             </View>
 
             {/* Rotation */}
-            <Text style={[styles.subLabel, { color: colors.muted }]}>回転: {selectedOverlay.rotation}°</Text>
+            <View style={styles.sliderRow}>
+              <Text style={[styles.sliderLabel, { color: colors.muted }]}>角度</Text>
+              <Pressable onPress={() => updateSelectedText({ rotation: selectedOverlay.rotation - 1 })} style={({ pressed }) => [styles.fineBtn, { backgroundColor: colors.border }, pressed && { opacity: 0.6 }]}>
+                <Text style={{ color: colors.foreground, fontSize: 14, fontWeight: "700" }}>−</Text>
+              </Pressable>
+              <View style={styles.sliderTrack}>
+                <View
+                  style={[styles.sliderFill, { width: `${((selectedOverlay.rotation + 360) % 720) / 7.2}%`, backgroundColor: colors.warning }]}
+                />
+                <View
+                  style={[styles.sliderThumb, { left: `${((selectedOverlay.rotation + 360) % 720) / 7.2}%`, backgroundColor: colors.warning }]}
+                  onStartShouldSetResponder={() => true}
+                  onMoveShouldSetResponder={() => true}
+                  onResponderMove={(evt) => {
+                    const touch = evt.nativeEvent;
+                    const newRot = Math.max(-360, Math.min(360, selectedOverlay.rotation + (touch.locationX - 10) * 1));
+                    updateSelectedText({ rotation: Math.round(newRot) });
+                  }}
+                />
+              </View>
+              <Pressable onPress={() => updateSelectedText({ rotation: selectedOverlay.rotation + 1 })} style={({ pressed }) => [styles.fineBtn, { backgroundColor: colors.border }, pressed && { opacity: 0.6 }]}>
+                <Text style={{ color: colors.foreground, fontSize: 14, fontWeight: "700" }}>+</Text>
+              </Pressable>
+              <TextInput
+                value={String(selectedOverlay.rotation)}
+                onChangeText={(val) => {
+                  const n = parseFloat(val);
+                  if (!isNaN(n)) updateSelectedText({ rotation: Math.max(-360, Math.min(360, n)) });
+                }}
+                keyboardType="numbers-and-punctuation"
+                style={[styles.numberInput, { color: colors.foreground, borderColor: colors.border }]}
+              />
+              <Text style={{ color: colors.muted, fontSize: 11 }}>°</Text>
+            </View>
+
+            {/* Quick rotation presets */}
             <View style={{ flexDirection: "row", gap: 6, marginBottom: 10 }}>
-              {[-90, -45, -15, 0, 15, 45, 90].map((deg) => (
+              {[-180, -90, -45, 0, 45, 90, 180].map((deg) => (
                 <Pressable
                   key={deg}
                   onPress={() => updateSelectedText({ rotation: deg })}
                   style={({ pressed }) => [
-                    {
-                      flex: 1, paddingVertical: 7, borderRadius: 8,
-                      alignItems: "center" as const,
-                      backgroundColor: selectedOverlay.rotation === deg ? colors.primary : colors.border,
-                    },
+                    styles.miniChip,
+                    { backgroundColor: selectedOverlay.rotation === deg ? colors.primary : colors.border },
                     pressed && { opacity: 0.7 },
                   ]}
                 >
-                  <Text style={{ color: selectedOverlay.rotation === deg ? "#FFFFFF" : colors.muted, fontWeight: "700", fontSize: 11 }}>
+                  <Text style={{ color: selectedOverlay.rotation === deg ? "#FFF" : colors.muted, fontSize: 10, fontWeight: "700" }}>
                     {deg}°
                   </Text>
                 </Pressable>
               ))}
+            </View>
+
+            {/* Scale (new) */}
+            <View style={styles.sliderRow}>
+              <Text style={[styles.sliderLabel, { color: colors.muted }]}>拡縮</Text>
+              <Pressable onPress={() => {
+                const cur = selectedOverlay.fontSize;
+                if (cur > 8) updateSelectedText({ fontSize: cur - 1 });
+              }} style={({ pressed }) => [styles.fineBtn, { backgroundColor: colors.border }, pressed && { opacity: 0.6 }]}>
+                <Text style={{ color: colors.foreground, fontSize: 14, fontWeight: "700" }}>−</Text>
+              </Pressable>
+              <View style={styles.sliderTrack}>
+                <View
+                  style={[styles.sliderFill, { width: `${Math.min((selectedOverlay.fontSize / 72) * 100, 100)}%`, backgroundColor: colors.success }]}
+                />
+              </View>
+              <Pressable onPress={() => {
+                const cur = selectedOverlay.fontSize;
+                if (cur < 120) updateSelectedText({ fontSize: cur + 1 });
+              }} style={({ pressed }) => [styles.fineBtn, { backgroundColor: colors.border }, pressed && { opacity: 0.6 }]}>
+                <Text style={{ color: colors.foreground, fontSize: 14, fontWeight: "700" }}>+</Text>
+              </Pressable>
+              <TextInput
+                value={String(selectedOverlay.fontSize)}
+                onChangeText={(val) => {
+                  const n = parseInt(val);
+                  if (!isNaN(n) && n >= 8 && n <= 120) updateSelectedText({ fontSize: n });
+                }}
+                keyboardType="numeric"
+                style={[styles.numberInput, { color: colors.foreground, borderColor: colors.border }]}
+              />
+              <Text style={{ color: colors.muted, fontSize: 11 }}>px</Text>
             </View>
 
             {/* Delete button */}
@@ -3304,6 +3420,60 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     minWidth: 70,
     alignItems: "center",
+  },
+  // ---- Slider controls ----
+  sliderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: 10,
+  },
+  sliderLabel: {
+    fontSize: 12,
+    fontWeight: "600",
+    width: 28,
+  },
+  sliderTrack: {
+    flex: 1,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: "rgba(128,128,128,0.2)",
+    justifyContent: "center",
+    position: "relative",
+    overflow: "hidden",
+  },
+  sliderFill: {
+    position: "absolute",
+    left: 0,
+    top: 0,
+    bottom: 0,
+    borderRadius: 14,
+    opacity: 0.3,
+  },
+  sliderThumb: {
+    position: "absolute",
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    marginLeft: -10,
+    top: 4,
+  },
+  fineBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  numberInput: {
+    width: 48,
+    height: 28,
+    borderRadius: 6,
+    borderWidth: 1,
+    textAlign: "center",
+    fontSize: 12,
+    fontWeight: "600",
+    paddingVertical: 0,
   },
   positionRow: {
     flexDirection: "row",
