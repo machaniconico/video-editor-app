@@ -349,6 +349,79 @@ export interface BGMTrack {
   volume: number;
 }
 
+// ---- Chroma Key ----
+
+export interface ChromaKeySettings {
+  enabled: boolean;
+  /** Target color to key out (hex) */
+  color: string;
+  /** Similarity/tolerance 0-100 */
+  similarity: number;
+  /** Edge smoothness 0-100 */
+  smoothness: number;
+  /** Spill suppression 0-100 */
+  spillSuppression: number;
+}
+
+export const DEFAULT_CHROMA_KEY: ChromaKeySettings = {
+  enabled: false,
+  color: "#00FF00",
+  similarity: 40,
+  smoothness: 10,
+  spillSuppression: 50,
+};
+
+// ---- Blend Modes ----
+
+export type BlendMode =
+  | "normal"
+  | "multiply"
+  | "screen"
+  | "overlay"
+  | "darken"
+  | "lighten"
+  | "color-dodge"
+  | "color-burn"
+  | "hard-light"
+  | "soft-light"
+  | "difference"
+  | "exclusion";
+
+export const BLEND_MODE_LABELS: { mode: BlendMode; label: string }[] = [
+  { mode: "normal", label: "通常" },
+  { mode: "multiply", label: "乗算" },
+  { mode: "screen", label: "スクリーン" },
+  { mode: "overlay", label: "オーバーレイ" },
+  { mode: "darken", label: "比較（暗）" },
+  { mode: "lighten", label: "比較（明）" },
+  { mode: "color-dodge", label: "覆い焼き" },
+  { mode: "color-burn", label: "焼き込み" },
+  { mode: "hard-light", label: "ハードライト" },
+  { mode: "soft-light", label: "ソフトライト" },
+  { mode: "difference", label: "差の絶対値" },
+  { mode: "exclusion", label: "除外" },
+];
+
+// ---- Sticker/Overlay ----
+
+export interface StickerOverlay {
+  id: string;
+  emoji: string;
+  x: number;
+  y: number;
+  scale: number;
+  rotation: number;
+  startTime: number;
+  endTime: number;
+}
+
+// ---- Beat Marker ----
+
+export interface BeatMarker {
+  /** Time position in seconds */
+  time: number;
+}
+
 // ---- Transition types ----
 
 export type TransitionType =
@@ -633,6 +706,22 @@ export interface TimelineClip {
   keyframes?: Keyframe[];
   /** Speed curve for variable speed playback */
   speedCurve?: SpeedCurve;
+  /** Reverse playback */
+  isReversed?: boolean;
+  /** Freeze frame at this time (seconds from clip start, undefined = no freeze) */
+  freezeFrameAt?: number;
+  /** Chroma key settings */
+  chromaKey?: ChromaKeySettings;
+  /** Blend mode for overlay compositing */
+  blendMode?: BlendMode;
+  /** Stabilization enabled */
+  isStabilized?: boolean;
+  /** Horizontal flip */
+  isFlippedH?: boolean;
+  /** Vertical flip */
+  isFlippedV?: boolean;
+  /** Crop rectangle (percentage 0-100) */
+  crop?: { top: number; right: number; bottom: number; left: number };
 }
 
 export interface TimelineTrack {
@@ -678,6 +767,12 @@ export interface VideoProject {
   effects?: VideoEffect[];
   /** Color adjustments */
   colorAdjustments?: ColorAdjustments;
+  /** Sticker overlays */
+  stickers?: StickerOverlay[];
+  /** Beat markers for beat-synced editing */
+  beatMarkers?: BeatMarker[];
+  /** Voice over recordings */
+  voiceOvers?: { uri: string; startTime: number; duration: number; volume: number }[];
 }
 
 const MAX_HISTORY = 50;

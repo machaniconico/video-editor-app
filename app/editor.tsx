@@ -29,8 +29,8 @@ import { useEditor } from "@/lib/editor-context";
 import { useOrientation } from "@/hooks/use-orientation";
 import { launchImageLibraryAsync } from "expo-image-picker";
 import { MultiTrackTimeline } from "@/components/multi-track-timeline";
-import type { TimelineTrack, TransitionType, ClipTransition, Keyframe, KeyframeProperty, SpeedCurve, TextAnimationType, TextAlignment, TextOverlay as TextOverlayType, VideoEffect, ColorAdjustments, ColorAdjustmentKey } from "@/lib/editor-context";
-import { createDefaultTracks, TRANSITION_PRESETS, KEYFRAME_PROPERTY_LABELS, SPEED_CURVE_PRESETS, getSpeedAtPosition, TEXT_ANIMATION_PRESETS, FONT_FAMILIES, TEXT_TEMPLATES, ASPECT_RATIO_PRESETS, VIDEO_EFFECT_PRESETS, COLOR_ADJUSTMENT_LABELS, DEFAULT_COLOR_ADJUSTMENTS } from "@/lib/editor-context";
+import type { TimelineTrack, TransitionType, ClipTransition, Keyframe, KeyframeProperty, SpeedCurve, TextAnimationType, TextAlignment, TextOverlay as TextOverlayType, VideoEffect, ColorAdjustments, ColorAdjustmentKey, BlendMode, ChromaKeySettings } from "@/lib/editor-context";
+import { createDefaultTracks, TRANSITION_PRESETS, KEYFRAME_PROPERTY_LABELS, SPEED_CURVE_PRESETS, getSpeedAtPosition, TEXT_ANIMATION_PRESETS, FONT_FAMILIES, TEXT_TEMPLATES, ASPECT_RATIO_PRESETS, VIDEO_EFFECT_PRESETS, COLOR_ADJUSTMENT_LABELS, DEFAULT_COLOR_ADJUSTMENTS, BLEND_MODE_LABELS, DEFAULT_CHROMA_KEY } from "@/lib/editor-context";
 
 // Filter definitions
 const FILTERS = [
@@ -95,7 +95,7 @@ const BGM_TRACKS = [
 
 const BGM_CATEGORIES = ["すべて", "ポップ", "チル", "エピック", "アコースティック"];
 
-type PanelType = "none" | "trim" | "filter" | "text" | "music" | "speed" | "frame" | "transition" | "keyframe" | "effects" | "color";
+type PanelType = "none" | "trim" | "filter" | "text" | "music" | "speed" | "frame" | "transition" | "keyframe" | "effects" | "color" | "clip-tools";
 
 // Frame layout definitions
 const FRAME_LAYOUTS: { id: import("@/lib/editor-context").FrameLayout; label: string; icon: string; slots: number }[] = [
@@ -895,6 +895,7 @@ export default function EditorScreen() {
         {activePanel === "keyframe" && renderKeyframePanel()}
         {activePanel === "effects" && renderEffectsPanel()}
         {activePanel === "color" && renderColorPanel()}
+        {activePanel === "clip-tools" && renderClipToolsPanel()}
       </View>
     </Animated.View>
   );
@@ -2810,6 +2811,282 @@ export default function EditorScreen() {
     );
   };
 
+  // ---- Clip Tools Panel (Reverse, Freeze, Chroma Key, Blend, Stabilize, Flip, Crop) ----
+  const updateSelectedClip = useCallback((updates: Partial<TimelineTrack["clips"][0]>) => {
+    if (!selectedClipId) return;
+    setTracks((prev) => prev.map((track) => ({
+      ...track,
+      clips: track.clips.map((clip) =>
+        clip.id === selectedClipId ? { ...clip, ...updates } : clip
+      ),
+    })));
+  }, [selectedClipId]);
+
+  const renderClipToolsPanel = () => {
+    if (!selectedClipId) {
+      return (
+        <View style={styles.panelInner}>
+          <Text style={[styles.panelTitle, { color: colors.foreground }]}>クリップツール</Text>
+          <Text style={{ color: colors.muted, fontSize: 13, textAlign: "center", marginTop: 16 }}>
+            クリップを選択してください
+          </Text>
+        </View>
+      );
+    }
+
+    const clip = tracks.flatMap((t) => t.clips).find((c) => c.id === selectedClipId);
+    if (!clip) return null;
+
+    return (
+      <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+        <View style={styles.panelInner}>
+          <Text style={[styles.panelTitle, { color: colors.foreground }]}>クリップツール</Text>
+
+          {/* Toggle options */}
+          {/* Reverse */}
+          <Pressable
+            onPress={() => {
+              updateSelectedClip({ isReversed: !clip.isReversed });
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            }}
+            style={({ pressed }) => [
+              styles.effectRow,
+              { borderColor: clip.isReversed ? colors.primary : colors.border, backgroundColor: clip.isReversed ? `${colors.primary}10` : "transparent" },
+              pressed && { opacity: 0.7 },
+            ]}
+          >
+            <IconSymbol name="arrow.uturn.backward" size={20} color={clip.isReversed ? colors.primary : colors.muted} />
+            <View style={{ flex: 1, marginLeft: 10 }}>
+              <Text style={{ color: clip.isReversed ? colors.primary : colors.foreground, fontSize: 14, fontWeight: "600" }}>逆再生</Text>
+              <Text style={{ color: colors.muted, fontSize: 11 }}>クリップを反転再生</Text>
+            </View>
+            <Text style={{ color: clip.isReversed ? colors.primary : colors.muted, fontSize: 12, fontWeight: "600" }}>
+              {clip.isReversed ? "ON" : "OFF"}
+            </Text>
+          </Pressable>
+
+          {/* Stabilization */}
+          <Pressable
+            onPress={() => {
+              updateSelectedClip({ isStabilized: !clip.isStabilized });
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            }}
+            style={({ pressed }) => [
+              styles.effectRow,
+              { borderColor: clip.isStabilized ? colors.primary : colors.border, backgroundColor: clip.isStabilized ? `${colors.primary}10` : "transparent", marginTop: 8 },
+              pressed && { opacity: 0.7 },
+            ]}
+          >
+            <IconSymbol name="hand.raised" size={20} color={clip.isStabilized ? colors.primary : colors.muted} />
+            <View style={{ flex: 1, marginLeft: 10 }}>
+              <Text style={{ color: clip.isStabilized ? colors.primary : colors.foreground, fontSize: 14, fontWeight: "600" }}>手ブレ補正</Text>
+              <Text style={{ color: colors.muted, fontSize: 11 }}>映像を安定化</Text>
+            </View>
+            <Text style={{ color: clip.isStabilized ? colors.primary : colors.muted, fontSize: 12, fontWeight: "600" }}>
+              {clip.isStabilized ? "ON" : "OFF"}
+            </Text>
+          </Pressable>
+
+          {/* Flip */}
+          <Text style={[styles.subLabel, { color: colors.muted, marginTop: 12 }]}>反転</Text>
+          <View style={{ flexDirection: "row", gap: 8, marginBottom: 10 }}>
+            <Pressable
+              onPress={() => {
+                updateSelectedClip({ isFlippedH: !clip.isFlippedH });
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              }}
+              style={({ pressed }) => [
+                styles.miniChip,
+                { backgroundColor: clip.isFlippedH ? colors.primary : colors.border, flex: 1, alignItems: "center" as const, paddingVertical: 10 },
+                pressed && { opacity: 0.7 },
+              ]}
+            >
+              <Text style={{ color: clip.isFlippedH ? "#FFF" : colors.muted, fontWeight: "600", fontSize: 13 }}>↔ 左右反転</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => {
+                updateSelectedClip({ isFlippedV: !clip.isFlippedV });
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              }}
+              style={({ pressed }) => [
+                styles.miniChip,
+                { backgroundColor: clip.isFlippedV ? colors.primary : colors.border, flex: 1, alignItems: "center" as const, paddingVertical: 10 },
+                pressed && { opacity: 0.7 },
+              ]}
+            >
+              <Text style={{ color: clip.isFlippedV ? "#FFF" : colors.muted, fontWeight: "600", fontSize: 13 }}>↕ 上下反転</Text>
+            </Pressable>
+          </View>
+
+          {/* Freeze Frame */}
+          <Text style={[styles.subLabel, { color: colors.muted }]}>フリーズフレーム</Text>
+          <View style={{ flexDirection: "row", gap: 8, marginBottom: 10 }}>
+            <Pressable
+              onPress={() => {
+                const relTime = Math.max(0, currentPlaybackTime - clip.timelineOffset);
+                updateSelectedClip({ freezeFrameAt: clip.freezeFrameAt !== undefined ? undefined : relTime });
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+              }}
+              style={({ pressed }) => [
+                styles.effectRow,
+                { flex: 1, borderColor: clip.freezeFrameAt !== undefined ? colors.warning : colors.border, backgroundColor: clip.freezeFrameAt !== undefined ? `${colors.warning}10` : "transparent" },
+                pressed && { opacity: 0.7 },
+              ]}
+            >
+              <IconSymbol name="pause.circle" size={20} color={clip.freezeFrameAt !== undefined ? colors.warning : colors.muted} />
+              <View style={{ flex: 1, marginLeft: 10 }}>
+                <Text style={{ color: clip.freezeFrameAt !== undefined ? colors.warning : colors.foreground, fontSize: 14, fontWeight: "600" }}>
+                  {clip.freezeFrameAt !== undefined ? `${clip.freezeFrameAt.toFixed(1)}s で静止` : "現在位置で静止画挿入"}
+                </Text>
+              </View>
+            </Pressable>
+          </View>
+
+          {/* Blend Mode */}
+          <Text style={[styles.subLabel, { color: colors.muted }]}>ブレンドモード</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
+            <View style={{ flexDirection: "row", gap: 6 }}>
+              {BLEND_MODE_LABELS.map(({ mode, label }) => {
+                const isActive = (clip.blendMode ?? "normal") === mode;
+                return (
+                  <Pressable
+                    key={mode}
+                    onPress={() => {
+                      updateSelectedClip({ blendMode: mode === "normal" ? undefined : mode });
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    }}
+                    style={({ pressed }) => [
+                      styles.animChip,
+                      { borderColor: isActive ? colors.primary : colors.border, backgroundColor: isActive ? `${colors.primary}15` : "transparent" },
+                      pressed && { opacity: 0.7 },
+                    ]}
+                  >
+                    <Text style={{ color: isActive ? colors.primary : colors.foreground, fontSize: 11, fontWeight: isActive ? "600" : "400" }}>
+                      {label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </ScrollView>
+
+          {/* Chroma Key */}
+          <Text style={[styles.subLabel, { color: colors.muted }]}>クロマキー（グリーンスクリーン）</Text>
+          <Pressable
+            onPress={() => {
+              const current = clip.chromaKey;
+              if (current?.enabled) {
+                updateSelectedClip({ chromaKey: { ...current, enabled: false } });
+              } else {
+                updateSelectedClip({ chromaKey: { ...(current ?? DEFAULT_CHROMA_KEY), enabled: true } });
+              }
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            }}
+            style={({ pressed }) => [
+              styles.effectRow,
+              { borderColor: clip.chromaKey?.enabled ? colors.success : colors.border, backgroundColor: clip.chromaKey?.enabled ? `${colors.success}10` : "transparent", marginBottom: 8 },
+              pressed && { opacity: 0.7 },
+            ]}
+          >
+            <IconSymbol name="square.on.square.dashed" size={20} color={clip.chromaKey?.enabled ? colors.success : colors.muted} />
+            <View style={{ flex: 1, marginLeft: 10 }}>
+              <Text style={{ color: clip.chromaKey?.enabled ? colors.success : colors.foreground, fontSize: 14, fontWeight: "600" }}>クロマキー</Text>
+              <Text style={{ color: colors.muted, fontSize: 11 }}>背景色を透過</Text>
+            </View>
+            <Text style={{ color: clip.chromaKey?.enabled ? colors.success : colors.muted, fontSize: 12, fontWeight: "600" }}>
+              {clip.chromaKey?.enabled ? "ON" : "OFF"}
+            </Text>
+          </Pressable>
+
+          {clip.chromaKey?.enabled && (
+            <>
+              {/* Key color selection */}
+              <Text style={{ color: colors.muted, fontSize: 12, marginBottom: 4 }}>キーカラー</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
+                <View style={styles.colorRow}>
+                  {["#00FF00", "#0000FF", "#FF0000", "#00FFFF", "#FF00FF", "#FFFFFF", "#000000"].map((c) => (
+                    <Pressable
+                      key={c}
+                      onPress={() => updateSelectedClip({ chromaKey: { ...clip.chromaKey!, color: c } })}
+                      style={[
+                        styles.colorDotSmall,
+                        { backgroundColor: c },
+                        clip.chromaKey?.color === c && { borderColor: colors.primary, borderWidth: 2 },
+                      ]}
+                    />
+                  ))}
+                </View>
+              </ScrollView>
+
+              {/* Similarity */}
+              <View style={styles.sliderRow}>
+                <Text style={[styles.sliderLabel, { color: colors.muted }]}>許容</Text>
+                <Pressable onPress={() => updateSelectedClip({ chromaKey: { ...clip.chromaKey!, similarity: Math.max(0, (clip.chromaKey?.similarity ?? 40) - 5) } })} style={({ pressed }) => [styles.fineBtn, { backgroundColor: colors.border }, pressed && { opacity: 0.6 }]}>
+                  <Text style={{ color: colors.foreground, fontSize: 14, fontWeight: "700" }}>−</Text>
+                </Pressable>
+                <View style={styles.sliderTrack}>
+                  <View style={[styles.sliderFill, { width: `${clip.chromaKey?.similarity ?? 40}%`, backgroundColor: colors.success }]} />
+                </View>
+                <Pressable onPress={() => updateSelectedClip({ chromaKey: { ...clip.chromaKey!, similarity: Math.min(100, (clip.chromaKey?.similarity ?? 40) + 5) } })} style={({ pressed }) => [styles.fineBtn, { backgroundColor: colors.border }, pressed && { opacity: 0.6 }]}>
+                  <Text style={{ color: colors.foreground, fontSize: 14, fontWeight: "700" }}>+</Text>
+                </Pressable>
+                <Text style={{ color: colors.foreground, fontSize: 12, fontWeight: "600", width: 36, textAlign: "center" }}>{clip.chromaKey?.similarity ?? 40}%</Text>
+              </View>
+
+              {/* Smoothness */}
+              <View style={styles.sliderRow}>
+                <Text style={[styles.sliderLabel, { color: colors.muted }]}>滑らか</Text>
+                <Pressable onPress={() => updateSelectedClip({ chromaKey: { ...clip.chromaKey!, smoothness: Math.max(0, (clip.chromaKey?.smoothness ?? 10) - 5) } })} style={({ pressed }) => [styles.fineBtn, { backgroundColor: colors.border }, pressed && { opacity: 0.6 }]}>
+                  <Text style={{ color: colors.foreground, fontSize: 14, fontWeight: "700" }}>−</Text>
+                </Pressable>
+                <View style={styles.sliderTrack}>
+                  <View style={[styles.sliderFill, { width: `${clip.chromaKey?.smoothness ?? 10}%`, backgroundColor: colors.success }]} />
+                </View>
+                <Pressable onPress={() => updateSelectedClip({ chromaKey: { ...clip.chromaKey!, smoothness: Math.min(100, (clip.chromaKey?.smoothness ?? 10) + 5) } })} style={({ pressed }) => [styles.fineBtn, { backgroundColor: colors.border }, pressed && { opacity: 0.6 }]}>
+                  <Text style={{ color: colors.foreground, fontSize: 14, fontWeight: "700" }}>+</Text>
+                </Pressable>
+                <Text style={{ color: colors.foreground, fontSize: 12, fontWeight: "600", width: 36, textAlign: "center" }}>{clip.chromaKey?.smoothness ?? 10}%</Text>
+              </View>
+            </>
+          )}
+
+          {/* Crop */}
+          <Text style={[styles.subLabel, { color: colors.muted, marginTop: 4 }]}>クロップ</Text>
+          {(["top", "right", "bottom", "left"] as const).map((side) => {
+            const labels: Record<string, string> = { top: "上", right: "右", bottom: "下", left: "左" };
+            const value = clip.crop?.[side] ?? 0;
+            return (
+              <View key={side} style={styles.sliderRow}>
+                <Text style={[styles.sliderLabel, { color: colors.muted }]}>{labels[side]}</Text>
+                <Pressable onPress={() => updateSelectedClip({ crop: { ...(clip.crop ?? { top: 0, right: 0, bottom: 0, left: 0 }), [side]: Math.max(0, value - 1) } })} style={({ pressed }) => [styles.fineBtn, { backgroundColor: colors.border }, pressed && { opacity: 0.6 }]}>
+                  <Text style={{ color: colors.foreground, fontSize: 14, fontWeight: "700" }}>−</Text>
+                </Pressable>
+                <View style={styles.sliderTrack}>
+                  <View style={[styles.sliderFill, { width: `${value}%`, backgroundColor: colors.primary }]} />
+                </View>
+                <Pressable onPress={() => updateSelectedClip({ crop: { ...(clip.crop ?? { top: 0, right: 0, bottom: 0, left: 0 }), [side]: Math.min(45, value + 1) } })} style={({ pressed }) => [styles.fineBtn, { backgroundColor: colors.border }, pressed && { opacity: 0.6 }]}>
+                  <Text style={{ color: colors.foreground, fontSize: 14, fontWeight: "700" }}>+</Text>
+                </Pressable>
+                <Text style={{ color: colors.foreground, fontSize: 12, fontWeight: "600", width: 36, textAlign: "center" }}>{value}%</Text>
+              </View>
+            );
+          })}
+
+          <Pressable
+            onPress={applyChanges}
+            style={({ pressed }) => [
+              styles.applyBtn,
+              { backgroundColor: colors.primary, marginTop: 12 },
+              pressed && { opacity: 0.9, transform: [{ scale: 0.97 }] },
+            ]}
+          >
+            <Text style={styles.applyBtnText}>適用</Text>
+          </Pressable>
+        </View>
+      </ScrollView>
+    );
+  };
+
   // ---- Effects Panel ----
   const toggleEffect = useCallback((type: VideoEffect["type"]) => {
     setEffects((prev) => {
@@ -3033,6 +3310,7 @@ export default function EditorScreen() {
         { key: "keyframe" as PanelType, icon: "diamond" as const, label: "キーフレーム" },
         { key: "effects" as PanelType, icon: "sparkles" as const, label: "エフェクト" },
         { key: "color" as PanelType, icon: "slider.horizontal.3" as const, label: "カラー" },
+        { key: "clip-tools" as PanelType, icon: "wrench" as const, label: "クリップ" },
       ]).map((tool) => (
         <Pressable
           key={tool.key}
