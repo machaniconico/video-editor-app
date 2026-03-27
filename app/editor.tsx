@@ -29,8 +29,8 @@ import { useEditor } from "@/lib/editor-context";
 import { useOrientation } from "@/hooks/use-orientation";
 import { launchImageLibraryAsync } from "expo-image-picker";
 import { MultiTrackTimeline } from "@/components/multi-track-timeline";
-import type { TimelineTrack, TransitionType, ClipTransition, Keyframe, KeyframeProperty, SpeedCurve } from "@/lib/editor-context";
-import { createDefaultTracks, TRANSITION_PRESETS, KEYFRAME_PROPERTY_LABELS, SPEED_CURVE_PRESETS, getSpeedAtPosition } from "@/lib/editor-context";
+import type { TimelineTrack, TransitionType, ClipTransition, Keyframe, KeyframeProperty, SpeedCurve, TextAnimationType, TextAlignment, TextOverlay as TextOverlayType } from "@/lib/editor-context";
+import { createDefaultTracks, TRANSITION_PRESETS, KEYFRAME_PROPERTY_LABELS, SPEED_CURVE_PRESETS, getSpeedAtPosition, TEXT_ANIMATION_PRESETS, FONT_FAMILIES, TEXT_TEMPLATES } from "@/lib/editor-context";
 
 // Filter definitions
 const FILTERS = [
@@ -55,7 +55,17 @@ const TEXT_COLORS = [
   "#007AFF",
   "#AF52DE",
   "#FF2D55",
+  "#8E8E93",
+  "#00C7BE",
+  "#FFD60A",
+  "#BF5AF2",
+  "#FF375F",
+  "#30D158",
+  "#64D2FF",
 ];
+
+// Font sizes extended
+const FONT_SIZES = [14, 18, 20, 24, 28, 32, 36, 42, 48, 56, 64, 72];
 
 // Speed presets
 const SPEED_PRESETS = [
@@ -95,8 +105,6 @@ const FRAME_LAYOUTS: { id: import("@/lib/editor-context").FrameLayout; label: st
   { id: "grid-4", label: "4分割", icon: "▦", slots: 4 },
   { id: "pip", label: "PiP", icon: "▣", slots: 2 },
 ];
-
-const FONT_SIZES = [14, 18, 24, 32, 40, 56];
 
 export default function EditorScreen() {
   const colors = useColors();
@@ -598,6 +606,12 @@ export default function EditorScreen() {
               top: `${overlay.y}%`,
               transform: [{ rotate: `${overlay.rotation}deg` }],
             },
+            overlay.background && {
+              backgroundColor: overlay.background.color + Math.round(overlay.background.opacity * 255).toString(16).padStart(2, "0"),
+              paddingHorizontal: overlay.background.paddingH,
+              paddingVertical: overlay.background.paddingV,
+              borderRadius: overlay.background.borderRadius,
+            },
             selectedTextId === overlay.id && {
               borderWidth: 1,
               borderColor: colors.primary,
@@ -611,6 +625,21 @@ export default function EditorScreen() {
               {
                 color: overlay.color,
                 fontSize: overlay.fontSize,
+                fontWeight: overlay.bold ? "bold" : "normal",
+                fontStyle: overlay.italic ? "italic" : "normal",
+                textAlign: overlay.alignment ?? "center",
+                letterSpacing: overlay.letterSpacing ?? 0,
+                lineHeight: overlay.lineHeight ? overlay.fontSize * overlay.lineHeight : undefined,
+                fontFamily: FONT_FAMILIES.find((f) => f.id === overlay.fontFamily)?.family,
+              },
+              overlay.outline && {
+                textShadowColor: overlay.outline.color,
+                textShadowRadius: overlay.outline.width,
+              },
+              overlay.shadow && {
+                textShadowColor: overlay.shadow.color,
+                textShadowOffset: { width: overlay.shadow.offsetX, height: overlay.shadow.offsetY },
+                textShadowRadius: overlay.shadow.blur,
               },
             ]}
           >
@@ -1147,6 +1176,7 @@ export default function EditorScreen() {
   const renderTextPanel = () => (
     <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
       <View style={styles.panelInner}>
+        {/* Header: Title + Add button */}
         <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
           <Text style={[styles.panelTitle, { color: colors.foreground, marginBottom: 0 }]}>テキスト</Text>
           <Pressable
@@ -1160,6 +1190,56 @@ export default function EditorScreen() {
             <Text style={{ color: "#FFFFFF", fontWeight: "600", fontSize: 13 }}>追加</Text>
           </Pressable>
         </View>
+
+        {/* Templates */}
+        <Text style={[styles.subLabel, { color: colors.muted }]}>テンプレート</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            {TEXT_TEMPLATES.map((tpl) => (
+              <Pressable
+                key={tpl.id}
+                onPress={() => {
+                  if (selectedOverlay) {
+                    updateSelectedText(tpl.style);
+                  } else {
+                    // Create new overlay from template
+                    const now = Date.now();
+                    const overlay: TextOverlayType = {
+                      id: `txt_${now}_${Math.random().toString(36).slice(2, 6)}`,
+                      text: tpl.label,
+                      fontSize: 24,
+                      color: "#FFFFFF",
+                      position: "center",
+                      bold: false,
+                      italic: false,
+                      x: 50,
+                      y: 50,
+                      rotation: 0,
+                      startTime: 0,
+                      endTime: project?.duration ?? 10,
+                      ...tpl.style,
+                    };
+                    setTextOverlays([...textOverlays, overlay]);
+                    setSelectedTextId(overlay.id);
+                    setTextInput(overlay.text);
+                    setTextColor(overlay.color);
+                    setTextSize(overlay.fontSize);
+                  }
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                }}
+                style={({ pressed }) => [
+                  styles.templateCard,
+                  { borderColor: colors.border, backgroundColor: `${colors.muted}10` },
+                  pressed && { opacity: 0.7 },
+                ]}
+              >
+                <Text style={{ color: tpl.style.color ?? "#FFF", fontSize: 11, fontWeight: tpl.style.bold ? "700" : "400", fontStyle: tpl.style.italic ? "italic" : "normal" }} numberOfLines={1}>
+                  {tpl.label}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        </ScrollView>
 
         {/* Text list */}
         {textOverlays.length > 0 && (
@@ -1177,10 +1257,7 @@ export default function EditorScreen() {
                   }}
                   style={({ pressed }) => [
                     {
-                      paddingHorizontal: 12,
-                      paddingVertical: 6,
-                      borderRadius: 8,
-                      borderWidth: 1.5,
+                      paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, borderWidth: 1.5,
                       borderColor: selectedTextId === o.id ? colors.primary : colors.border,
                       backgroundColor: selectedTextId === o.id ? `${colors.primary}15` : "transparent",
                     },
@@ -1208,21 +1285,54 @@ export default function EditorScreen() {
           }}
           placeholder="テキストを入力..."
           placeholderTextColor={colors.muted}
+          multiline
           style={[
             styles.textInputField,
             {
               color: colors.foreground,
               borderColor: colors.border,
               backgroundColor: colors.background,
+              minHeight: 60,
+              textAlignVertical: "top",
             },
           ]}
-          returnKeyType="done"
         />
+
+        {/* Font family */}
+        <Text style={[styles.subLabel, { color: colors.muted }]}>フォント</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            {FONT_FAMILIES.map((font) => {
+              const isActive = (selectedOverlay?.fontFamily ?? "system") === font.id;
+              return (
+                <Pressable
+                  key={font.id}
+                  onPress={() => {
+                    if (selectedOverlay) updateSelectedText({ fontFamily: font.id });
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  }}
+                  style={({ pressed }) => [
+                    {
+                      paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8, borderWidth: 1.5,
+                      borderColor: isActive ? colors.primary : colors.border,
+                      backgroundColor: isActive ? `${colors.primary}15` : "transparent",
+                    },
+                    pressed && { opacity: 0.7 },
+                  ]}
+                >
+                  <Text style={{ color: isActive ? colors.primary : colors.foreground, fontSize: 13, fontWeight: "600", fontFamily: font.family }}>
+                    {font.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </ScrollView>
 
         {/* Font size */}
         <Text style={[styles.subLabel, { color: colors.muted }]}>サイズ</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
-          <View style={{ flexDirection: "row", gap: 8 }}>
+          <View style={{ flexDirection: "row", gap: 6 }}>
             {FONT_SIZES.map((size) => (
               <Pressable
                 key={size}
@@ -1232,17 +1342,14 @@ export default function EditorScreen() {
                 }}
                 style={({ pressed }) => [
                   {
-                    width: 40,
-                    height: 40,
-                    borderRadius: 8,
-                    alignItems: "center" as const,
-                    justifyContent: "center" as const,
+                    width: 38, height: 38, borderRadius: 8,
+                    alignItems: "center" as const, justifyContent: "center" as const,
                     backgroundColor: (selectedOverlay?.fontSize ?? textSize) === size ? colors.primary : colors.border,
                   },
                   pressed && { opacity: 0.7 },
                 ]}
               >
-                <Text style={{ color: (selectedOverlay?.fontSize ?? textSize) === size ? "#FFFFFF" : colors.muted, fontWeight: "700", fontSize: 13 }}>
+                <Text style={{ color: (selectedOverlay?.fontSize ?? textSize) === size ? "#FFFFFF" : colors.muted, fontWeight: "700", fontSize: 12 }}>
                   {size}
                 </Text>
               </Pressable>
@@ -1250,9 +1357,52 @@ export default function EditorScreen() {
           </View>
         </ScrollView>
 
+        {/* Style: Bold, Italic, Alignment */}
+        <Text style={[styles.subLabel, { color: colors.muted }]}>スタイル</Text>
+        <View style={{ flexDirection: "row", gap: 8, marginBottom: 10 }}>
+          <Pressable
+            onPress={() => { if (selectedOverlay) updateSelectedText({ bold: !selectedOverlay.bold }); }}
+            style={({ pressed }) => [
+              styles.styleToggleBtn,
+              { backgroundColor: selectedOverlay?.bold ? colors.primary : colors.border },
+              pressed && { opacity: 0.7 },
+            ]}
+          >
+            <Text style={{ color: selectedOverlay?.bold ? "#FFF" : colors.muted, fontWeight: "900", fontSize: 16 }}>B</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => { if (selectedOverlay) updateSelectedText({ italic: !selectedOverlay.italic }); }}
+            style={({ pressed }) => [
+              styles.styleToggleBtn,
+              { backgroundColor: selectedOverlay?.italic ? colors.primary : colors.border },
+              pressed && { opacity: 0.7 },
+            ]}
+          >
+            <Text style={{ color: selectedOverlay?.italic ? "#FFF" : colors.muted, fontWeight: "700", fontSize: 16, fontStyle: "italic" }}>I</Text>
+          </Pressable>
+          <View style={{ width: 1, backgroundColor: colors.border, marginHorizontal: 4 }} />
+          {(["left", "center", "right"] as TextAlignment[]).map((align) => {
+            const icons: Record<string, string> = { left: "text.alignleft", center: "text.aligncenter", right: "text.alignright" };
+            const isActive = (selectedOverlay?.alignment ?? "center") === align;
+            return (
+              <Pressable
+                key={align}
+                onPress={() => { if (selectedOverlay) updateSelectedText({ alignment: align }); }}
+                style={({ pressed }) => [
+                  styles.styleToggleBtn,
+                  { backgroundColor: isActive ? colors.primary : colors.border },
+                  pressed && { opacity: 0.7 },
+                ]}
+              >
+                <IconSymbol name={icons[align] as any} size={16} color={isActive ? "#FFF" : colors.muted} />
+              </Pressable>
+            );
+          })}
+        </View>
+
         {/* Color */}
         <Text style={[styles.subLabel, { color: colors.muted }]}>カラー</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
           <View style={styles.colorRow}>
             {TEXT_COLORS.map((c) => (
               <Pressable
@@ -1271,9 +1421,243 @@ export default function EditorScreen() {
           </View>
         </ScrollView>
 
-        {/* Position controls for selected overlay */}
+        {/* Advanced options for selected overlay */}
         {selectedOverlay && (
           <>
+            {/* Letter spacing */}
+            <Text style={[styles.subLabel, { color: colors.muted }]}>文字間隔: {selectedOverlay.letterSpacing ?? 0}px</Text>
+            <View style={{ flexDirection: "row", gap: 6, marginBottom: 10 }}>
+              {[0, 1, 2, 4, 6, 8, 12].map((ls) => (
+                <Pressable
+                  key={ls}
+                  onPress={() => updateSelectedText({ letterSpacing: ls })}
+                  style={({ pressed }) => [
+                    styles.miniChip,
+                    { backgroundColor: (selectedOverlay.letterSpacing ?? 0) === ls ? colors.primary : colors.border },
+                    pressed && { opacity: 0.7 },
+                  ]}
+                >
+                  <Text style={{ color: (selectedOverlay.letterSpacing ?? 0) === ls ? "#FFF" : colors.muted, fontSize: 11, fontWeight: "600" }}>{ls}</Text>
+                </Pressable>
+              ))}
+            </View>
+
+            {/* Line height */}
+            <Text style={[styles.subLabel, { color: colors.muted }]}>行間隔: {(selectedOverlay.lineHeight ?? 1.2).toFixed(1)}</Text>
+            <View style={{ flexDirection: "row", gap: 6, marginBottom: 10 }}>
+              {[1.0, 1.2, 1.4, 1.6, 1.8, 2.0].map((lh) => (
+                <Pressable
+                  key={lh}
+                  onPress={() => updateSelectedText({ lineHeight: lh })}
+                  style={({ pressed }) => [
+                    styles.miniChip,
+                    { backgroundColor: (selectedOverlay.lineHeight ?? 1.2) === lh ? colors.primary : colors.border },
+                    pressed && { opacity: 0.7 },
+                  ]}
+                >
+                  <Text style={{ color: (selectedOverlay.lineHeight ?? 1.2) === lh ? "#FFF" : colors.muted, fontSize: 11, fontWeight: "600" }}>{lh}</Text>
+                </Pressable>
+              ))}
+            </View>
+
+            {/* Outline */}
+            <Text style={[styles.subLabel, { color: colors.muted }]}>縁取り（アウトライン）</Text>
+            <View style={{ flexDirection: "row", gap: 6, marginBottom: 4 }}>
+              {[0, 1, 2, 3, 4].map((w) => {
+                const isActive = (selectedOverlay.outline?.width ?? 0) === w;
+                return (
+                  <Pressable
+                    key={w}
+                    onPress={() => updateSelectedText({ outline: w === 0 ? undefined : { color: selectedOverlay.outline?.color ?? "#000000", width: w } })}
+                    style={({ pressed }) => [
+                      styles.miniChip,
+                      { backgroundColor: isActive ? colors.primary : colors.border },
+                      pressed && { opacity: 0.7 },
+                    ]}
+                  >
+                    <Text style={{ color: isActive ? "#FFF" : colors.muted, fontSize: 11, fontWeight: "600" }}>{w === 0 ? "なし" : `${w}px`}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            {selectedOverlay.outline && (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
+                <View style={styles.colorRow}>
+                  {["#000000", "#FFFFFF", "#FF3B30", "#007AFF", "#FFD60A", "#34C759"].map((c) => (
+                    <Pressable
+                      key={`outline-${c}`}
+                      onPress={() => updateSelectedText({ outline: { ...selectedOverlay.outline!, color: c } })}
+                      style={[
+                        styles.colorDotSmall,
+                        { backgroundColor: c },
+                        selectedOverlay.outline?.color === c && { borderColor: colors.primary, borderWidth: 2 },
+                      ]}
+                    />
+                  ))}
+                </View>
+              </ScrollView>
+            )}
+
+            {/* Shadow */}
+            <Text style={[styles.subLabel, { color: colors.muted }]}>影（シャドウ）</Text>
+            <View style={{ flexDirection: "row", gap: 6, marginBottom: 4 }}>
+              <Pressable
+                onPress={() => updateSelectedText({ shadow: undefined })}
+                style={({ pressed }) => [
+                  styles.miniChip,
+                  { backgroundColor: !selectedOverlay.shadow ? colors.primary : colors.border },
+                  pressed && { opacity: 0.7 },
+                ]}
+              >
+                <Text style={{ color: !selectedOverlay.shadow ? "#FFF" : colors.muted, fontSize: 11, fontWeight: "600" }}>なし</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => updateSelectedText({ shadow: { color: "rgba(0,0,0,0.5)", offsetX: 2, offsetY: 2, blur: 4 } })}
+                style={({ pressed }) => [
+                  styles.miniChip,
+                  { backgroundColor: selectedOverlay.shadow && selectedOverlay.shadow.blur <= 4 ? colors.primary : colors.border },
+                  pressed && { opacity: 0.7 },
+                ]}
+              >
+                <Text style={{ color: selectedOverlay.shadow && selectedOverlay.shadow.blur <= 4 ? "#FFF" : colors.muted, fontSize: 11, fontWeight: "600" }}>軽い</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => updateSelectedText({ shadow: { color: "rgba(0,0,0,0.7)", offsetX: 4, offsetY: 4, blur: 8 } })}
+                style={({ pressed }) => [
+                  styles.miniChip,
+                  { backgroundColor: selectedOverlay.shadow && selectedOverlay.shadow.blur > 4 && selectedOverlay.shadow.blur <= 8 ? colors.primary : colors.border },
+                  pressed && { opacity: 0.7 },
+                ]}
+              >
+                <Text style={{ color: selectedOverlay.shadow && selectedOverlay.shadow.blur > 4 && selectedOverlay.shadow.blur <= 8 ? "#FFF" : colors.muted, fontSize: 11, fontWeight: "600" }}>中</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => updateSelectedText({ shadow: { color: "rgba(0,0,0,0.9)", offsetX: 6, offsetY: 6, blur: 16 } })}
+                style={({ pressed }) => [
+                  styles.miniChip,
+                  { backgroundColor: selectedOverlay.shadow && selectedOverlay.shadow.blur > 8 ? colors.primary : colors.border },
+                  pressed && { opacity: 0.7 },
+                ]}
+              >
+                <Text style={{ color: selectedOverlay.shadow && selectedOverlay.shadow.blur > 8 ? "#FFF" : colors.muted, fontSize: 11, fontWeight: "600" }}>強い</Text>
+              </Pressable>
+            </View>
+            {selectedOverlay.shadow && (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
+                <View style={styles.colorRow}>
+                  {["rgba(0,0,0,0.7)", "rgba(255,255,255,0.5)", "#FF3B30", "#007AFF", "#00FF88"].map((c, i) => (
+                    <Pressable
+                      key={`shadow-${i}`}
+                      onPress={() => updateSelectedText({ shadow: { ...selectedOverlay.shadow!, color: c } })}
+                      style={[
+                        styles.colorDotSmall,
+                        { backgroundColor: c },
+                        selectedOverlay.shadow?.color === c && { borderColor: colors.primary, borderWidth: 2 },
+                      ]}
+                    />
+                  ))}
+                </View>
+              </ScrollView>
+            )}
+
+            {/* Background highlight */}
+            <Text style={[styles.subLabel, { color: colors.muted }]}>背景ハイライト</Text>
+            <View style={{ flexDirection: "row", gap: 6, marginBottom: 10 }}>
+              <Pressable
+                onPress={() => updateSelectedText({ background: undefined })}
+                style={({ pressed }) => [
+                  styles.miniChip,
+                  { backgroundColor: !selectedOverlay.background ? colors.primary : colors.border },
+                  pressed && { opacity: 0.7 },
+                ]}
+              >
+                <Text style={{ color: !selectedOverlay.background ? "#FFF" : colors.muted, fontSize: 11, fontWeight: "600" }}>なし</Text>
+              </Pressable>
+              {[
+                { label: "黒", bg: { color: "#000000", opacity: 0.6, paddingH: 10, paddingV: 4, borderRadius: 4 } },
+                { label: "白", bg: { color: "#FFFFFF", opacity: 0.7, paddingH: 10, paddingV: 4, borderRadius: 4 } },
+                { label: "青", bg: { color: "#007AFF", opacity: 0.8, paddingH: 12, paddingV: 6, borderRadius: 6 } },
+                { label: "赤", bg: { color: "#FF3B30", opacity: 0.8, paddingH: 12, paddingV: 6, borderRadius: 6 } },
+                { label: "丸", bg: { color: "#000000", opacity: 0.5, paddingH: 16, paddingV: 8, borderRadius: 20 } },
+              ].map((opt) => {
+                const isActive = selectedOverlay.background?.color === opt.bg.color && selectedOverlay.background?.borderRadius === opt.bg.borderRadius;
+                return (
+                  <Pressable
+                    key={opt.label}
+                    onPress={() => updateSelectedText({ background: opt.bg })}
+                    style={({ pressed }) => [
+                      styles.miniChip,
+                      { backgroundColor: isActive ? colors.primary : colors.border },
+                      pressed && { opacity: 0.7 },
+                    ]}
+                  >
+                    <Text style={{ color: isActive ? "#FFF" : colors.muted, fontSize: 11, fontWeight: "600" }}>{opt.label}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            {/* Animation In */}
+            <Text style={[styles.subLabel, { color: colors.muted }]}>入場アニメーション</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
+              <View style={{ flexDirection: "row", gap: 6 }}>
+                {TEXT_ANIMATION_PRESETS.map((anim) => {
+                  const isActive = (selectedOverlay.animationIn?.type ?? "none") === anim.type;
+                  return (
+                    <Pressable
+                      key={`in-${anim.type}`}
+                      onPress={() => {
+                        updateSelectedText({
+                          animationIn: anim.type === "none" ? undefined : { type: anim.type, duration: selectedOverlay.animationIn?.duration ?? 0.5 },
+                        });
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      }}
+                      style={({ pressed }) => [
+                        styles.animChip,
+                        { borderColor: isActive ? colors.primary : colors.border, backgroundColor: isActive ? `${colors.primary}15` : "transparent" },
+                        pressed && { opacity: 0.7 },
+                      ]}
+                    >
+                      <Text style={{ color: isActive ? colors.primary : colors.foreground, fontSize: 11, fontWeight: isActive ? "600" : "400" }}>
+                        {anim.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </ScrollView>
+
+            {/* Animation Out */}
+            <Text style={[styles.subLabel, { color: colors.muted }]}>退場アニメーション</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
+              <View style={{ flexDirection: "row", gap: 6 }}>
+                {TEXT_ANIMATION_PRESETS.map((anim) => {
+                  const isActive = (selectedOverlay.animationOut?.type ?? "none") === anim.type;
+                  return (
+                    <Pressable
+                      key={`out-${anim.type}`}
+                      onPress={() => {
+                        updateSelectedText({
+                          animationOut: anim.type === "none" ? undefined : { type: anim.type, duration: selectedOverlay.animationOut?.duration ?? 0.5 },
+                        });
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      }}
+                      style={({ pressed }) => [
+                        styles.animChip,
+                        { borderColor: isActive ? colors.primary : colors.border, backgroundColor: isActive ? `${colors.primary}15` : "transparent" },
+                        pressed && { opacity: 0.7 },
+                      ]}
+                    >
+                      <Text style={{ color: isActive ? colors.primary : colors.foreground, fontSize: 11, fontWeight: isActive ? "600" : "400" }}>
+                        {anim.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </ScrollView>
+
+            {/* Position controls */}
             <Text style={[styles.subLabel, { color: colors.muted }]}>位置調整</Text>
             <View style={{ flexDirection: "row", gap: 8, marginBottom: 10 }}>
               <View style={{ flex: 1 }}>
@@ -1315,22 +1699,20 @@ export default function EditorScreen() {
             {/* Rotation */}
             <Text style={[styles.subLabel, { color: colors.muted }]}>回転: {selectedOverlay.rotation}°</Text>
             <View style={{ flexDirection: "row", gap: 6, marginBottom: 10 }}>
-              {[-45, -15, 0, 15, 45].map((deg) => (
+              {[-90, -45, -15, 0, 15, 45, 90].map((deg) => (
                 <Pressable
                   key={deg}
                   onPress={() => updateSelectedText({ rotation: deg })}
                   style={({ pressed }) => [
                     {
-                      flex: 1,
-                      paddingVertical: 7,
-                      borderRadius: 8,
+                      flex: 1, paddingVertical: 7, borderRadius: 8,
                       alignItems: "center" as const,
                       backgroundColor: selectedOverlay.rotation === deg ? colors.primary : colors.border,
                     },
                     pressed && { opacity: 0.7 },
                   ]}
                 >
-                  <Text style={{ color: selectedOverlay.rotation === deg ? "#FFFFFF" : colors.muted, fontWeight: "700", fontSize: 12 }}>
+                  <Text style={{ color: selectedOverlay.rotation === deg ? "#FFFFFF" : colors.muted, fontWeight: "700", fontSize: 11 }}>
                     {deg}°
                   </Text>
                 </Pressable>
@@ -2889,6 +3271,39 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 2,
     borderColor: "transparent",
+  },
+  colorDotSmall: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    borderWidth: 2,
+    borderColor: "transparent",
+  },
+  styleToggleBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  miniChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  animChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1.5,
+  },
+  templateCard: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    minWidth: 70,
+    alignItems: "center",
   },
   positionRow: {
     flexDirection: "row",

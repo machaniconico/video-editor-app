@@ -2,6 +2,187 @@ import React, { createContext, useContext, useReducer, useCallback } from "react
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 // Types
+export type TextAlignment = "left" | "center" | "right";
+
+export type TextAnimationType =
+  | "none"
+  | "fade-in"
+  | "fade-out"
+  | "typewriter"
+  | "bounce"
+  | "slide-up"
+  | "slide-down"
+  | "slide-left"
+  | "slide-right"
+  | "scale-up"
+  | "scale-down"
+  | "rotate-in"
+  | "glitch"
+  | "wave";
+
+export interface TextAnimation {
+  type: TextAnimationType;
+  /** Duration of the animation in seconds */
+  duration: number;
+}
+
+export interface TextOutline {
+  color: string;
+  width: number;
+}
+
+export interface TextShadow {
+  color: string;
+  offsetX: number;
+  offsetY: number;
+  blur: number;
+}
+
+export interface TextBackground {
+  color: string;
+  opacity: number;
+  paddingH: number;
+  paddingV: number;
+  borderRadius: number;
+}
+
+export const TEXT_ANIMATION_PRESETS: { type: TextAnimationType; label: string }[] = [
+  { type: "none", label: "なし" },
+  { type: "fade-in", label: "フェードイン" },
+  { type: "fade-out", label: "フェードアウト" },
+  { type: "typewriter", label: "タイプライター" },
+  { type: "bounce", label: "バウンス" },
+  { type: "slide-up", label: "スライドアップ" },
+  { type: "slide-down", label: "スライドダウン" },
+  { type: "slide-left", label: "スライド左" },
+  { type: "slide-right", label: "スライド右" },
+  { type: "scale-up", label: "拡大" },
+  { type: "scale-down", label: "縮小" },
+  { type: "rotate-in", label: "回転イン" },
+  { type: "glitch", label: "グリッチ" },
+  { type: "wave", label: "ウェーブ" },
+];
+
+export const FONT_FAMILIES = [
+  { id: "system", label: "システム", family: undefined },
+  { id: "serif", label: "明朝", family: "serif" },
+  { id: "monospace", label: "等幅", family: "monospace" },
+  { id: "rounded", label: "丸ゴシック", family: "System" },
+  { id: "condensed", label: "コンデンス", family: "System" },
+];
+
+export interface TextTemplate {
+  id: string;
+  label: string;
+  style: Partial<TextOverlay>;
+}
+
+export const TEXT_TEMPLATES: TextTemplate[] = [
+  {
+    id: "title",
+    label: "タイトル",
+    style: {
+      fontSize: 48,
+      bold: true,
+      color: "#FFFFFF",
+      alignment: "center",
+      outline: { color: "#000000", width: 2 },
+      shadow: { color: "rgba(0,0,0,0.5)", offsetX: 2, offsetY: 2, blur: 4 },
+      animationIn: { type: "scale-up", duration: 0.5 },
+    },
+  },
+  {
+    id: "subtitle",
+    label: "字幕",
+    style: {
+      fontSize: 20,
+      bold: false,
+      color: "#FFFFFF",
+      alignment: "center",
+      y: 85,
+      background: { color: "#000000", opacity: 0.6, paddingH: 12, paddingV: 4, borderRadius: 4 },
+    },
+  },
+  {
+    id: "lower-third",
+    label: "ローワーサード",
+    style: {
+      fontSize: 24,
+      bold: true,
+      color: "#FFFFFF",
+      alignment: "left",
+      x: 10,
+      y: 75,
+      background: { color: "#007AFF", opacity: 0.85, paddingH: 16, paddingV: 8, borderRadius: 6 },
+      animationIn: { type: "slide-left", duration: 0.4 },
+    },
+  },
+  {
+    id: "callout",
+    label: "コールアウト",
+    style: {
+      fontSize: 28,
+      bold: true,
+      color: "#FFD60A",
+      alignment: "center",
+      outline: { color: "#000000", width: 3 },
+      animationIn: { type: "bounce", duration: 0.5 },
+    },
+  },
+  {
+    id: "minimal",
+    label: "ミニマル",
+    style: {
+      fontSize: 18,
+      bold: false,
+      color: "#FFFFFF",
+      alignment: "left",
+      letterSpacing: 2,
+      animationIn: { type: "fade-in", duration: 0.8 },
+    },
+  },
+  {
+    id: "impact",
+    label: "インパクト",
+    style: {
+      fontSize: 56,
+      bold: true,
+      color: "#FF3B30",
+      alignment: "center",
+      outline: { color: "#FFFFFF", width: 3 },
+      shadow: { color: "rgba(0,0,0,0.8)", offsetX: 4, offsetY: 4, blur: 8 },
+      animationIn: { type: "scale-up", duration: 0.3 },
+    },
+  },
+  {
+    id: "neon",
+    label: "ネオン",
+    style: {
+      fontSize: 36,
+      bold: true,
+      color: "#00FF88",
+      alignment: "center",
+      shadow: { color: "#00FF88", offsetX: 0, offsetY: 0, blur: 16 },
+      animationIn: { type: "glitch", duration: 0.6 },
+    },
+  },
+  {
+    id: "cinematic",
+    label: "シネマ",
+    style: {
+      fontSize: 32,
+      bold: false,
+      italic: true,
+      color: "#FFFFFF",
+      alignment: "center",
+      letterSpacing: 4,
+      lineHeight: 1.6,
+      animationIn: { type: "fade-in", duration: 1.2 },
+      animationOut: { type: "fade-out", duration: 1.0 },
+    },
+  },
+];
+
 export interface TextOverlay {
   id: string;
   text: string;
@@ -18,6 +199,24 @@ export interface TextOverlay {
   startTime: number;
   /** End time on timeline (seconds). Defaults to video duration */
   endTime: number;
+  /** Font family identifier */
+  fontFamily?: string;
+  /** Text alignment */
+  alignment?: TextAlignment;
+  /** Letter spacing in pixels */
+  letterSpacing?: number;
+  /** Line height multiplier (1.0 = normal) */
+  lineHeight?: number;
+  /** Outline/stroke effect */
+  outline?: TextOutline;
+  /** Drop shadow effect */
+  shadow?: TextShadow;
+  /** Background highlight */
+  background?: TextBackground;
+  /** Entrance animation */
+  animationIn?: TextAnimation;
+  /** Exit animation */
+  animationOut?: TextAnimation;
 }
 
 export interface FrameSlot {
