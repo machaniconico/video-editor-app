@@ -29,8 +29,8 @@ import { useEditor } from "@/lib/editor-context";
 import { useOrientation } from "@/hooks/use-orientation";
 import { launchImageLibraryAsync } from "expo-image-picker";
 import { MultiTrackTimeline } from "@/components/multi-track-timeline";
-import type { TimelineTrack } from "@/lib/editor-context";
-import { createDefaultTracks } from "@/lib/editor-context";
+import type { TimelineTrack, TransitionType, ClipTransition } from "@/lib/editor-context";
+import { createDefaultTracks, TRANSITION_PRESETS } from "@/lib/editor-context";
 
 // Filter definitions
 const FILTERS = [
@@ -85,7 +85,7 @@ const BGM_TRACKS = [
 
 const BGM_CATEGORIES = ["すべて", "ポップ", "チル", "エピック", "アコースティック"];
 
-type PanelType = "none" | "trim" | "filter" | "text" | "music" | "speed" | "frame";
+type PanelType = "none" | "trim" | "filter" | "text" | "music" | "speed" | "frame" | "transition";
 
 // Frame layout definitions
 const FRAME_LAYOUTS: { id: import("@/lib/editor-context").FrameLayout; label: string; icon: string; slots: number }[] = [
@@ -133,6 +133,8 @@ export default function EditorScreen() {
     project?.tracks ?? (project ? createDefaultTracks(project.videoUri, project.duration) : [])
   );
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
+  const [selectedTransition, setSelectedTransition] = useState<TransitionType>("none");
+  const [transitionDuration, setTransitionDuration] = useState(0.5);
   const [isFullscreenPreview, setIsFullscreenPreview] = useState(false);
 
   // Current playback position for timeline playhead
@@ -831,6 +833,7 @@ export default function EditorScreen() {
         {activePanel === "music" && renderMusicPanel()}
         {activePanel === "speed" && renderSpeedPanel()}
         {activePanel === "frame" && renderFramePanel()}
+        {activePanel === "transition" && renderTransitionPanel()}
       </View>
     </Animated.View>
   );
@@ -1794,6 +1797,144 @@ export default function EditorScreen() {
     );
   };
 
+  const applyTransitionToSelectedClip = useCallback((type: TransitionType, duration: number) => {
+    if (!selectedClipId) return;
+    setTracks((prev) => prev.map((track) => ({
+      ...track,
+      clips: track.clips.map((clip) =>
+        clip.id === selectedClipId
+          ? { ...clip, transition: type === "none" ? undefined : { type, duration } }
+          : clip
+      ),
+    })));
+  }, [selectedClipId]);
+
+  const renderTransitionPanel = () => {
+    if (!selectedClipId) {
+      return (
+        <View style={styles.panelInner}>
+          <Text style={[styles.panelTitle, { color: colors.foreground }]}>トランジション</Text>
+          <Text style={{ color: colors.muted, fontSize: 13, textAlign: "center", marginTop: 16 }}>
+            クリップを選択してからトランジションを設定してください
+          </Text>
+        </View>
+      );
+    }
+
+    // Find current transition of selected clip
+    const selectedClip = tracks
+      .flatMap((t) => t.clips)
+      .find((c) => c.id === selectedClipId);
+    const currentType = selectedClip?.transition?.type ?? "none";
+
+    return (
+      <ScrollView style={styles.panelInner} showsVerticalScrollIndicator={false}>
+        <Text style={[styles.panelTitle, { color: colors.foreground }]}>トランジション</Text>
+
+        {/* Transition type grid */}
+        <View style={styles.transitionGrid}>
+          {TRANSITION_PRESETS.map((preset) => {
+            const isActive = currentType === preset.type;
+            return (
+              <Pressable
+                key={preset.type}
+                onPress={() => {
+                  setSelectedTransition(preset.type);
+                  applyTransitionToSelectedClip(preset.type, transitionDuration);
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                }}
+                style={({ pressed }) => [
+                  styles.transitionItem,
+                  {
+                    backgroundColor: isActive ? `${colors.primary}25` : `${colors.muted}15`,
+                    borderColor: isActive ? colors.primary : "transparent",
+                  },
+                  pressed && { opacity: 0.7 },
+                ]}
+              >
+                <IconSymbol
+                  name={preset.icon as any}
+                  size={22}
+                  color={isActive ? colors.primary : colors.muted}
+                />
+                <Text
+                  style={{
+                    fontSize: 10,
+                    marginTop: 4,
+                    color: isActive ? colors.primary : colors.foreground,
+                    fontWeight: isActive ? "600" : "400",
+                  }}
+                  numberOfLines={1}
+                >
+                  {preset.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+
+        {/* Duration control */}
+        {currentType !== "none" && (
+          <View style={{ marginTop: 16 }}>
+            <Text style={{ color: colors.foreground, fontSize: 13, fontWeight: "600", marginBottom: 8 }}>
+              長さ: {transitionDuration.toFixed(1)}秒
+            </Text>
+            <View style={styles.transitionDurations}>
+              {[0.2, 0.3, 0.5, 0.8, 1.0, 1.5, 2.0].map((d) => (
+                <Pressable
+                  key={d}
+                  onPress={() => {
+                    setTransitionDuration(d);
+                    applyTransitionToSelectedClip(currentType, d);
+                  }}
+                  style={({ pressed }) => [
+                    styles.durationChip,
+                    {
+                      backgroundColor: transitionDuration === d ? colors.primary : `${colors.muted}20`,
+                    },
+                    pressed && { opacity: 0.7 },
+                  ]}
+                >
+                  <Text
+                    style={{
+                      fontSize: 12,
+                      color: transitionDuration === d ? "#fff" : colors.foreground,
+                      fontWeight: transitionDuration === d ? "600" : "400",
+                    }}
+                  >
+                    {d}s
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+        )}
+
+        {/* Apply to all button */}
+        {currentType !== "none" && (
+          <Pressable
+            onPress={() => {
+              setTracks((prev) => prev.map((track) => ({
+                ...track,
+                clips: track.clips.map((clip, idx) =>
+                  idx === 0 ? clip : { ...clip, transition: { type: currentType, duration: transitionDuration } }
+                ),
+              })));
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            }}
+            style={({ pressed }) => [
+              styles.applyBtn,
+              { backgroundColor: colors.primary },
+              pressed && { opacity: 0.8 },
+            ]}
+          >
+            <Text style={styles.applyBtnText}>全クリップに適用</Text>
+          </Pressable>
+        )}
+      </ScrollView>
+    );
+  };
+
   const renderToolbar = () => (
     <View
       style={[
@@ -1812,6 +1953,7 @@ export default function EditorScreen() {
         { key: "music" as PanelType, icon: "music.note" as const, label: "BGM" },
         { key: "speed" as PanelType, icon: "speedometer" as const, label: "速度" },
         { key: "frame" as PanelType, icon: "rectangle.on.rectangle" as const, label: "フレーム" },
+        { key: "transition" as PanelType, icon: "arrow.right.arrow.left" as const, label: "切替効果" },
       ]).map((tool) => (
         <Pressable
           key={tool.key}
@@ -1932,7 +2074,18 @@ export default function EditorScreen() {
                       setTrimEnd(clip.trimEnd);
                     }
                   }}
-                  onClipSelect={(trackId, clipId) => setSelectedClipId(clipId || null)}
+                  onClipSelect={(trackId, clipId) => {
+                    setSelectedClipId(clipId || null);
+                    if (clipId) {
+                      const clip = tracks.flatMap((t) => t.clips).find((c) => c.id === clipId);
+                      if (clip?.transition) {
+                        setSelectedTransition(clip.transition.type);
+                        setTransitionDuration(clip.transition.duration);
+                      } else {
+                        setSelectedTransition("none");
+                      }
+                    }
+                  }}
                   selectedClipId={selectedClipId}
                   isLandscape
                   textOverlays={textOverlays}
@@ -2045,7 +2198,18 @@ export default function EditorScreen() {
                   setTrimEnd(clip.trimEnd);
                 }
               }}
-              onClipSelect={(trackId, clipId) => setSelectedClipId(clipId || null)}
+              onClipSelect={(trackId, clipId) => {
+                    setSelectedClipId(clipId || null);
+                    if (clipId) {
+                      const clip = tracks.flatMap((t) => t.clips).find((c) => c.id === clipId);
+                      if (clip?.transition) {
+                        setSelectedTransition(clip.transition.type);
+                        setTransitionDuration(clip.transition.duration);
+                      } else {
+                        setSelectedTransition("none");
+                      }
+                    }
+                  }}
               selectedClipId={selectedClipId}
               textOverlays={textOverlays}
               onTextOverlaysChange={setTextOverlays}
@@ -2436,6 +2600,31 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontWeight: "700",
     fontSize: 16,
+  },
+  // ---- Transition Panel ----
+  transitionGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 12,
+  },
+  transitionItem: {
+    width: 72,
+    height: 64,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1.5,
+  },
+  transitionDurations: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  durationChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 16,
   },
   // ---- Toolbar (Portrait) ----
   toolbar: {

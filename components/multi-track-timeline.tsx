@@ -20,6 +20,7 @@ import {
   TrackType,
   TextOverlay,
   getNextTrackColor,
+  TRANSITION_PRESETS,
 } from "@/lib/editor-context";
 
 interface MultiTrackTimelineProps {
@@ -647,6 +648,14 @@ export function MultiTrackTimeline({
           }}
           onResponderTerminate={onMoveEnd}
         >
+          {/* Transition indicator */}
+          {clip.transition && clip.transition.type !== "none" && (
+            <View style={[st.transitionBadge, { backgroundColor: `${track.color}80` }]}>
+              <Text style={st.transitionBadgeText}>
+                {TRANSITION_PRESETS.find((p) => p.type === clip.transition?.type)?.label ?? ""}
+              </Text>
+            </View>
+          )}
           <Text style={[st.clipName, { color: track.color }]} numberOfLines={1}>
             {clip.name}
           </Text>
@@ -1333,6 +1342,20 @@ const st = StyleSheet.create({
   clipSpeed: {
     fontSize: 9,
     fontWeight: "700",
+  },
+  transitionBadge: {
+    position: "absolute",
+    top: 2,
+    left: 2,
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderRadius: 4,
+    zIndex: 10,
+  },
+  transitionBadgeText: {
+    fontSize: 7,
+    fontWeight: "700",
+    color: "#FFFFFF",
   },
   waveformContainer: {
     position: "absolute",

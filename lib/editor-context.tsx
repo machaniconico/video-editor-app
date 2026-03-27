@@ -44,6 +44,53 @@ export interface BGMTrack {
   volume: number;
 }
 
+// ---- Transition types ----
+
+export type TransitionType =
+  | "none"
+  | "fade"
+  | "dissolve"
+  | "slide-left"
+  | "slide-right"
+  | "slide-up"
+  | "slide-down"
+  | "zoom-in"
+  | "zoom-out"
+  | "wipe-left"
+  | "wipe-right"
+  | "wipe-up"
+  | "wipe-down"
+  | "blur"
+  | "flash"
+  | "rotate"
+  | "glitch";
+
+export interface ClipTransition {
+  type: TransitionType;
+  /** Duration of the transition in seconds (0.1 – 2.0) */
+  duration: number;
+}
+
+export const TRANSITION_PRESETS: { type: TransitionType; label: string; icon: string }[] = [
+  { type: "none", label: "なし", icon: "xmark" },
+  { type: "fade", label: "フェード", icon: "circle.lefthalf.filled" },
+  { type: "dissolve", label: "ディゾルブ", icon: "sparkles" },
+  { type: "slide-left", label: "スライド左", icon: "arrow.left.square" },
+  { type: "slide-right", label: "スライド右", icon: "arrow.right.square" },
+  { type: "slide-up", label: "スライド上", icon: "arrow.up.square" },
+  { type: "slide-down", label: "スライド下", icon: "arrow.down.square" },
+  { type: "zoom-in", label: "ズームイン", icon: "plus.magnifyingglass" },
+  { type: "zoom-out", label: "ズームアウト", icon: "minus.magnifyingglass" },
+  { type: "wipe-left", label: "ワイプ左", icon: "rectangle.lefthalf.inset.filled.arrow.left" },
+  { type: "wipe-right", label: "ワイプ右", icon: "rectangle.righthalf.inset.filled.arrow.right" },
+  { type: "wipe-up", label: "ワイプ上", icon: "rectangle.tophalf.inset.filled" },
+  { type: "wipe-down", label: "ワイプ下", icon: "rectangle.bottomhalf.inset.filled" },
+  { type: "blur", label: "ブラー", icon: "aqi.medium" },
+  { type: "flash", label: "フラッシュ", icon: "bolt.fill" },
+  { type: "rotate", label: "回転", icon: "arrow.triangle.2.circlepath" },
+  { type: "glitch", label: "グリッチ", icon: "waveform.path.ecg" },
+];
+
 // ---- Multi-track types ----
 
 export type TrackType = "video" | "audio" | "bgm";
@@ -66,6 +113,8 @@ export interface TimelineClip {
   speed: number;
   /** Volume (0-1) */
   volume: number;
+  /** Transition applied at the start of this clip */
+  transition?: ClipTransition;
 }
 
 export interface TimelineTrack {
