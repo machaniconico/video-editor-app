@@ -29,8 +29,8 @@ import { useEditor } from "@/lib/editor-context";
 import { useOrientation } from "@/hooks/use-orientation";
 import { launchImageLibraryAsync } from "expo-image-picker";
 import { MultiTrackTimeline } from "@/components/multi-track-timeline";
-import type { TimelineTrack, TransitionType, ClipTransition } from "@/lib/editor-context";
-import { createDefaultTracks, TRANSITION_PRESETS } from "@/lib/editor-context";
+import type { TimelineTrack, TransitionType, ClipTransition, Keyframe, KeyframeProperty } from "@/lib/editor-context";
+import { createDefaultTracks, TRANSITION_PRESETS, KEYFRAME_PROPERTY_LABELS } from "@/lib/editor-context";
 
 // Filter definitions
 const FILTERS = [
@@ -85,7 +85,7 @@ const BGM_TRACKS = [
 
 const BGM_CATEGORIES = ["すべて", "ポップ", "チル", "エピック", "アコースティック"];
 
-type PanelType = "none" | "trim" | "filter" | "text" | "music" | "speed" | "frame" | "transition";
+type PanelType = "none" | "trim" | "filter" | "text" | "music" | "speed" | "frame" | "transition" | "keyframe";
 
 // Frame layout definitions
 const FRAME_LAYOUTS: { id: import("@/lib/editor-context").FrameLayout; label: string; icon: string; slots: number }[] = [
@@ -135,6 +135,8 @@ export default function EditorScreen() {
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
   const [selectedTransition, setSelectedTransition] = useState<TransitionType>("none");
   const [transitionDuration, setTransitionDuration] = useState(0.5);
+  const [activeKeyframeProperty, setActiveKeyframeProperty] = useState<KeyframeProperty>("x");
+  const [keyframeEasing, setKeyframeEasing] = useState<Keyframe["easing"]>("linear");
   const [isFullscreenPreview, setIsFullscreenPreview] = useState(false);
 
   // Current playback position for timeline playhead
@@ -834,6 +836,7 @@ export default function EditorScreen() {
         {activePanel === "speed" && renderSpeedPanel()}
         {activePanel === "frame" && renderFramePanel()}
         {activePanel === "transition" && renderTransitionPanel()}
+        {activePanel === "keyframe" && renderKeyframePanel()}
       </View>
     </Animated.View>
   );
@@ -1935,6 +1938,269 @@ export default function EditorScreen() {
     );
   };
 
+  // ---- Keyframe helpers ----
+  const getSelectedClipKeyframes = useCallback((): Keyframe[] => {
+    if (!selectedClipId) return [];
+    const clip = tracks.flatMap((t) => t.clips).find((c) => c.id === selectedClipId);
+    return clip?.keyframes ?? [];
+  }, [selectedClipId, tracks]);
+
+  const updateClipKeyframes = useCallback((newKeyframes: Keyframe[]) => {
+    if (!selectedClipId) return;
+    setTracks((prev) => prev.map((track) => ({
+      ...track,
+      clips: track.clips.map((clip) =>
+        clip.id === selectedClipId ? { ...clip, keyframes: newKeyframes } : clip
+      ),
+    })));
+  }, [selectedClipId]);
+
+  const addKeyframe = useCallback((property: KeyframeProperty, time: number, value: number) => {
+    const kfs = getSelectedClipKeyframes();
+    const newKf: Keyframe = {
+      id: `kf_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      time,
+      property,
+      value,
+      easing: keyframeEasing,
+    };
+    updateClipKeyframes([...kfs, newKf]);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  }, [getSelectedClipKeyframes, updateClipKeyframes, keyframeEasing]);
+
+  const removeKeyframe = useCallback((kfId: string) => {
+    const kfs = getSelectedClipKeyframes();
+    updateClipKeyframes(kfs.filter((kf) => kf.id !== kfId));
+  }, [getSelectedClipKeyframes, updateClipKeyframes]);
+
+  const renderKeyframePanel = () => {
+    if (!selectedClipId) {
+      return (
+        <View style={styles.panelInner}>
+          <Text style={[styles.panelTitle, { color: colors.foreground }]}>キーフレーム</Text>
+          <Text style={{ color: colors.muted, fontSize: 13, textAlign: "center", marginTop: 16 }}>
+            クリップを選択してからキーフレームを設定してください
+          </Text>
+        </View>
+      );
+    }
+
+    const clip = tracks.flatMap((t) => t.clips).find((c) => c.id === selectedClipId);
+    if (!clip) return null;
+
+    const keyframes = clip.keyframes ?? [];
+    const propertyKeyframes = keyframes.filter((kf) => kf.property === activeKeyframeProperty);
+    const propConfig = KEYFRAME_PROPERTY_LABELS[activeKeyframeProperty];
+    const clipDuration = (clip.trimEnd - clip.trimStart) / clip.speed;
+
+    return (
+      <ScrollView style={styles.panelInner} showsVerticalScrollIndicator={false}>
+        <Text style={[styles.panelTitle, { color: colors.foreground }]}>キーフレーム</Text>
+
+        {/* Property selector */}
+        <View style={styles.transitionGrid}>
+          {(Object.keys(KEYFRAME_PROPERTY_LABELS) as KeyframeProperty[]).map((prop) => {
+            const config = KEYFRAME_PROPERTY_LABELS[prop];
+            const isActive = activeKeyframeProperty === prop;
+            const count = keyframes.filter((kf) => kf.property === prop).length;
+            return (
+              <Pressable
+                key={prop}
+                onPress={() => setActiveKeyframeProperty(prop)}
+                style={({ pressed }) => [
+                  styles.transitionItem,
+                  {
+                    backgroundColor: isActive ? `${colors.primary}25` : `${colors.muted}15`,
+                    borderColor: isActive ? colors.primary : "transparent",
+                  },
+                  pressed && { opacity: 0.7 },
+                ]}
+              >
+                <IconSymbol name={config.icon as any} size={20} color={isActive ? colors.primary : colors.muted} />
+                <Text style={{ fontSize: 9, marginTop: 2, color: isActive ? colors.primary : colors.foreground, fontWeight: isActive ? "600" : "400" }} numberOfLines={1}>
+                  {config.label}
+                </Text>
+                {count > 0 && (
+                  <View style={[styles.keyframeBadge, { backgroundColor: colors.primary }]}>
+                    <Text style={{ fontSize: 8, color: "#fff", fontWeight: "700" }}>{count}</Text>
+                  </View>
+                )}
+              </Pressable>
+            );
+          })}
+        </View>
+
+        {/* Easing selector */}
+        <Text style={{ color: colors.foreground, fontSize: 13, fontWeight: "600", marginTop: 14, marginBottom: 6 }}>
+          イージング
+        </Text>
+        <View style={styles.transitionDurations}>
+          {(["linear", "ease-in", "ease-out", "ease-in-out"] as Keyframe["easing"][]).map((e) => {
+            const labels: Record<string, string> = { linear: "リニア", "ease-in": "イーズイン", "ease-out": "イーズアウト", "ease-in-out": "イーズ" };
+            return (
+              <Pressable
+                key={e}
+                onPress={() => setKeyframeEasing(e)}
+                style={({ pressed }) => [
+                  styles.durationChip,
+                  { backgroundColor: keyframeEasing === e ? colors.primary : `${colors.muted}20` },
+                  pressed && { opacity: 0.7 },
+                ]}
+              >
+                <Text style={{ fontSize: 11, color: keyframeEasing === e ? "#fff" : colors.foreground, fontWeight: keyframeEasing === e ? "600" : "400" }}>
+                  {labels[e]}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+
+        {/* Add keyframe at current time */}
+        <Pressable
+          onPress={() => {
+            const relativeTime = Math.max(0, Math.min(currentPlaybackTime - clip.timelineOffset, clipDuration));
+            addKeyframe(activeKeyframeProperty, relativeTime, propConfig.defaultValue);
+          }}
+          style={({ pressed }) => [
+            styles.applyBtn,
+            { backgroundColor: colors.primary, marginTop: 14 },
+            pressed && { opacity: 0.8 },
+          ]}
+        >
+          <Text style={styles.applyBtnText}>
+            現在位置にキーフレーム追加 ({propConfig.label})
+          </Text>
+        </Pressable>
+
+        {/* Existing keyframes list */}
+        {propertyKeyframes.length > 0 && (
+          <View style={{ marginTop: 14 }}>
+            <Text style={{ color: colors.foreground, fontSize: 13, fontWeight: "600", marginBottom: 8 }}>
+              {propConfig.label}のキーフレーム ({propertyKeyframes.length})
+            </Text>
+            {propertyKeyframes
+              .sort((a, b) => a.time - b.time)
+              .map((kf) => (
+                <View
+                  key={kf.id}
+                  style={[styles.keyframeRow, { borderColor: colors.border }]}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: colors.foreground, fontSize: 13, fontWeight: "600" }}>
+                      {kf.time.toFixed(1)}s → {kf.value}{propConfig.unit}
+                    </Text>
+                    <Text style={{ color: colors.muted, fontSize: 11 }}>
+                      {kf.easing}
+                    </Text>
+                  </View>
+                  <Pressable
+                    onPress={() => removeKeyframe(kf.id)}
+                    style={({ pressed }) => [pressed && { opacity: 0.6 }]}
+                  >
+                    <IconSymbol name="trash" size={16} color={colors.error} />
+                  </Pressable>
+                </View>
+              ))}
+          </View>
+        )}
+
+        {/* Quick presets */}
+        <Text style={{ color: colors.foreground, fontSize: 13, fontWeight: "600", marginTop: 14, marginBottom: 8 }}>
+          プリセット
+        </Text>
+        <View style={styles.transitionDurations}>
+          <Pressable
+            onPress={() => {
+              // Fade in: opacity 0 -> 100
+              updateClipKeyframes([
+                ...keyframes.filter((kf) => kf.property !== "opacity"),
+                { id: `kf_${Date.now()}_1`, time: 0, property: "opacity", value: 0, easing: "ease-out" },
+                { id: `kf_${Date.now()}_2`, time: Math.min(1, clipDuration), property: "opacity", value: 100, easing: "ease-out" },
+              ]);
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            }}
+            style={({ pressed }) => [styles.durationChip, { backgroundColor: `${colors.muted}20` }, pressed && { opacity: 0.7 }]}
+          >
+            <Text style={{ fontSize: 11, color: colors.foreground }}>フェードイン</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => {
+              // Fade out: opacity 100 -> 0
+              updateClipKeyframes([
+                ...keyframes.filter((kf) => kf.property !== "opacity"),
+                { id: `kf_${Date.now()}_1`, time: Math.max(0, clipDuration - 1), property: "opacity", value: 100, easing: "ease-in" },
+                { id: `kf_${Date.now()}_2`, time: clipDuration, property: "opacity", value: 0, easing: "ease-in" },
+              ]);
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            }}
+            style={({ pressed }) => [styles.durationChip, { backgroundColor: `${colors.muted}20` }, pressed && { opacity: 0.7 }]}
+          >
+            <Text style={{ fontSize: 11, color: colors.foreground }}>フェードアウト</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => {
+              // Zoom in: scale 50 -> 100
+              updateClipKeyframes([
+                ...keyframes.filter((kf) => kf.property !== "scale"),
+                { id: `kf_${Date.now()}_1`, time: 0, property: "scale", value: 50, easing: "ease-out" },
+                { id: `kf_${Date.now()}_2`, time: clipDuration, property: "scale", value: 100, easing: "ease-out" },
+              ]);
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            }}
+            style={({ pressed }) => [styles.durationChip, { backgroundColor: `${colors.muted}20` }, pressed && { opacity: 0.7 }]}
+          >
+            <Text style={{ fontSize: 11, color: colors.foreground }}>ズームイン</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => {
+              // Slide in from left: x -100 -> 0
+              updateClipKeyframes([
+                ...keyframes.filter((kf) => kf.property !== "x"),
+                { id: `kf_${Date.now()}_1`, time: 0, property: "x", value: -100, easing: "ease-out" },
+                { id: `kf_${Date.now()}_2`, time: Math.min(0.5, clipDuration), property: "x", value: 0, easing: "ease-out" },
+              ]);
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            }}
+            style={({ pressed }) => [styles.durationChip, { backgroundColor: `${colors.muted}20` }, pressed && { opacity: 0.7 }]}
+          >
+            <Text style={{ fontSize: 11, color: colors.foreground }}>スライドイン</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => {
+              // Spin: rotation 0 -> 360
+              updateClipKeyframes([
+                ...keyframes.filter((kf) => kf.property !== "rotation"),
+                { id: `kf_${Date.now()}_1`, time: 0, property: "rotation", value: 0, easing: "linear" },
+                { id: `kf_${Date.now()}_2`, time: clipDuration, property: "rotation", value: 360, easing: "linear" },
+              ]);
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            }}
+            style={({ pressed }) => [styles.durationChip, { backgroundColor: `${colors.muted}20` }, pressed && { opacity: 0.7 }]}
+          >
+            <Text style={{ fontSize: 11, color: colors.foreground }}>回転</Text>
+          </Pressable>
+        </View>
+
+        {/* Clear all keyframes */}
+        {keyframes.length > 0 && (
+          <Pressable
+            onPress={() => {
+              updateClipKeyframes([]);
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+            }}
+            style={({ pressed }) => [
+              styles.applyBtn,
+              { backgroundColor: colors.error, marginTop: 14 },
+              pressed && { opacity: 0.8 },
+            ]}
+          >
+            <Text style={styles.applyBtnText}>全キーフレームをクリア</Text>
+          </Pressable>
+        )}
+      </ScrollView>
+    );
+  };
+
   const renderToolbar = () => (
     <View
       style={[
@@ -1954,6 +2220,7 @@ export default function EditorScreen() {
         { key: "speed" as PanelType, icon: "speedometer" as const, label: "速度" },
         { key: "frame" as PanelType, icon: "rectangle.on.rectangle" as const, label: "フレーム" },
         { key: "transition" as PanelType, icon: "arrow.right.arrow.left" as const, label: "切替効果" },
+        { key: "keyframe" as PanelType, icon: "diamond" as const, label: "キーフレーム" },
       ]).map((tool) => (
         <Pressable
           key={tool.key}
@@ -2625,6 +2892,26 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 6,
     borderRadius: 16,
+  },
+  // ---- Keyframe Panel ----
+  keyframeBadge: {
+    position: "absolute",
+    top: 2,
+    right: 2,
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  keyframeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderRadius: 8,
+    marginBottom: 6,
   },
   // ---- Toolbar (Portrait) ----
   toolbar: {

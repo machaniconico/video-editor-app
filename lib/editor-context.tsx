@@ -91,6 +91,86 @@ export const TRANSITION_PRESETS: { type: TransitionType; label: string; icon: st
   { type: "glitch", label: "グリッチ", icon: "waveform.path.ecg" },
 ];
 
+// ---- Keyframe types ----
+
+export type KeyframeProperty = "x" | "y" | "scale" | "rotation" | "opacity";
+
+export interface Keyframe {
+  id: string;
+  /** Time position in seconds (relative to clip start) */
+  time: number;
+  /** Property being animated */
+  property: KeyframeProperty;
+  /** Value at this keyframe */
+  value: number;
+  /** Easing function */
+  easing: "linear" | "ease-in" | "ease-out" | "ease-in-out";
+}
+
+export interface KeyframeGroup {
+  /** Which clip this keyframe group belongs to */
+  clipId: string;
+  keyframes: Keyframe[];
+}
+
+export const KEYFRAME_PROPERTY_LABELS: Record<KeyframeProperty, { label: string; icon: string; min: number; max: number; step: number; unit: string; defaultValue: number }> = {
+  x: { label: "X位置", icon: "arrow.left.and.right", min: -100, max: 100, step: 1, unit: "%", defaultValue: 0 },
+  y: { label: "Y位置", icon: "arrow.up.and.down", min: -100, max: 100, step: 1, unit: "%", defaultValue: 0 },
+  scale: { label: "スケール", icon: "arrow.up.left.and.arrow.down.right", min: 0, max: 300, step: 1, unit: "%", defaultValue: 100 },
+  rotation: { label: "回転", icon: "rotate.right", min: -360, max: 360, step: 1, unit: "°", defaultValue: 0 },
+  opacity: { label: "透明度", icon: "circle.lefthalf.filled", min: 0, max: 100, step: 1, unit: "%", defaultValue: 100 },
+};
+
+/**
+ * Interpolate a keyframe value at a given time.
+ * Returns the interpolated value between surrounding keyframes.
+ */
+export function interpolateKeyframes(
+  keyframes: Keyframe[],
+  property: KeyframeProperty,
+  time: number,
+): number {
+  const propertyKfs = keyframes
+    .filter((kf) => kf.property === property)
+    .sort((a, b) => a.time - b.time);
+
+  if (propertyKfs.length === 0) {
+    return KEYFRAME_PROPERTY_LABELS[property].defaultValue;
+  }
+
+  // Before first keyframe
+  if (time <= propertyKfs[0].time) return propertyKfs[0].value;
+  // After last keyframe
+  if (time >= propertyKfs[propertyKfs.length - 1].time) return propertyKfs[propertyKfs.length - 1].value;
+
+  // Find surrounding keyframes
+  for (let i = 0; i < propertyKfs.length - 1; i++) {
+    const kfA = propertyKfs[i];
+    const kfB = propertyKfs[i + 1];
+    if (time >= kfA.time && time <= kfB.time) {
+      const t = (time - kfA.time) / (kfB.time - kfA.time);
+      const easedT = applyEasing(t, kfB.easing);
+      return kfA.value + (kfB.value - kfA.value) * easedT;
+    }
+  }
+
+  return propertyKfs[0].value;
+}
+
+function applyEasing(t: number, easing: Keyframe["easing"]): number {
+  switch (easing) {
+    case "ease-in":
+      return t * t;
+    case "ease-out":
+      return t * (2 - t);
+    case "ease-in-out":
+      return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+    case "linear":
+    default:
+      return t;
+  }
+}
+
 // ---- Multi-track types ----
 
 export type TrackType = "video" | "audio" | "bgm";
@@ -115,6 +195,8 @@ export interface TimelineClip {
   volume: number;
   /** Transition applied at the start of this clip */
   transition?: ClipTransition;
+  /** Keyframe animations for this clip */
+  keyframes?: Keyframe[];
 }
 
 export interface TimelineTrack {

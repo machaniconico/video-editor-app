@@ -684,6 +684,29 @@ export function MultiTrackTimeline({
               <IconSymbol name="chevron.left.forwardslash.chevron.right" size={14} color={track.color} />
             </View>
           )}
+          {/* Keyframe diamond indicators */}
+          {clip.keyframes && clip.keyframes.length > 0 && (
+            <View style={st.keyframeDots}>
+              {clip.keyframes
+                .filter((kf, i, arr) => {
+                  // Deduplicate by time (show one diamond per time position)
+                  return arr.findIndex((k) => Math.abs(k.time - kf.time) < 0.05) === i;
+                })
+                .map((kf) => {
+                  const clipDur = (visualTrimEnd - visualTrimStart) / clip.speed;
+                  const leftPct = clipDur > 0 ? (kf.time / clipDur) * 100 : 0;
+                  return (
+                    <View
+                      key={kf.id}
+                      style={[
+                        st.keyframeDiamond,
+                        { left: `${Math.min(Math.max(leftPct, 2), 98)}%`, backgroundColor: "#FFD60A" },
+                      ]}
+                    />
+                  );
+                })}
+            </View>
+          )}
         </View>
 
         {/* Right trim handle - large hit area */}
@@ -1342,6 +1365,21 @@ const st = StyleSheet.create({
   clipSpeed: {
     fontSize: 9,
     fontWeight: "700",
+  },
+  keyframeDots: {
+    position: "absolute",
+    bottom: 1,
+    left: 0,
+    right: 0,
+    height: 8,
+  },
+  keyframeDiamond: {
+    position: "absolute",
+    width: 6,
+    height: 6,
+    transform: [{ rotate: "45deg" }],
+    bottom: 1,
+    marginLeft: -3,
   },
   transitionBadge: {
     position: "absolute",
