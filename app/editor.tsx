@@ -29,8 +29,8 @@ import { useEditor } from "@/lib/editor-context";
 import { useOrientation } from "@/hooks/use-orientation";
 import { launchImageLibraryAsync } from "expo-image-picker";
 import { MultiTrackTimeline } from "@/components/multi-track-timeline";
-import type { TimelineTrack, TransitionType, ClipTransition, Keyframe, KeyframeProperty, SpeedCurve, TextAnimationType, TextAlignment, TextOverlay as TextOverlayType } from "@/lib/editor-context";
-import { createDefaultTracks, TRANSITION_PRESETS, KEYFRAME_PROPERTY_LABELS, SPEED_CURVE_PRESETS, getSpeedAtPosition, TEXT_ANIMATION_PRESETS, FONT_FAMILIES, TEXT_TEMPLATES, ASPECT_RATIO_PRESETS } from "@/lib/editor-context";
+import type { TimelineTrack, TransitionType, ClipTransition, Keyframe, KeyframeProperty, SpeedCurve, TextAnimationType, TextAlignment, TextOverlay as TextOverlayType, VideoEffect, ColorAdjustments, ColorAdjustmentKey } from "@/lib/editor-context";
+import { createDefaultTracks, TRANSITION_PRESETS, KEYFRAME_PROPERTY_LABELS, SPEED_CURVE_PRESETS, getSpeedAtPosition, TEXT_ANIMATION_PRESETS, FONT_FAMILIES, TEXT_TEMPLATES, ASPECT_RATIO_PRESETS, VIDEO_EFFECT_PRESETS, COLOR_ADJUSTMENT_LABELS, DEFAULT_COLOR_ADJUSTMENTS } from "@/lib/editor-context";
 
 // Filter definitions
 const FILTERS = [
@@ -95,7 +95,7 @@ const BGM_TRACKS = [
 
 const BGM_CATEGORIES = ["すべて", "ポップ", "チル", "エピック", "アコースティック"];
 
-type PanelType = "none" | "trim" | "filter" | "text" | "music" | "speed" | "frame" | "transition" | "keyframe";
+type PanelType = "none" | "trim" | "filter" | "text" | "music" | "speed" | "frame" | "transition" | "keyframe" | "effects" | "color";
 
 // Frame layout definitions
 const FRAME_LAYOUTS: { id: import("@/lib/editor-context").FrameLayout; label: string; icon: string; slots: number }[] = [
@@ -145,6 +145,8 @@ export default function EditorScreen() {
   const [transitionDuration, setTransitionDuration] = useState(0.5);
   const [activeKeyframeProperty, setActiveKeyframeProperty] = useState<KeyframeProperty>("x");
   const [keyframeEasing, setKeyframeEasing] = useState<Keyframe["easing"]>("linear");
+  const [effects, setEffects] = useState<VideoEffect[]>(project?.effects ?? []);
+  const [colorAdj, setColorAdj] = useState<ColorAdjustments>(project?.colorAdjustments ?? { ...DEFAULT_COLOR_ADJUSTMENTS });
   const [isFullscreenPreview, setIsFullscreenPreview] = useState(false);
 
   // Current playback position for timeline playhead
@@ -494,6 +496,8 @@ export default function EditorScreen() {
     updates.frameSlots = frameSlots;
     updates.textOverlays = textOverlays;
     updates.tracks = tracks;
+    updates.effects = effects;
+    updates.colorAdjustments = colorAdj;
 
     dispatch({ type: "UPDATE_CURRENT_PROJECT", payload: updates });
     setActivePanel("none");
@@ -889,6 +893,8 @@ export default function EditorScreen() {
         {activePanel === "frame" && renderFramePanel()}
         {activePanel === "transition" && renderTransitionPanel()}
         {activePanel === "keyframe" && renderKeyframePanel()}
+        {activePanel === "effects" && renderEffectsPanel()}
+        {activePanel === "color" && renderColorPanel()}
       </View>
     </Animated.View>
   );
@@ -2804,6 +2810,207 @@ export default function EditorScreen() {
     );
   };
 
+  // ---- Effects Panel ----
+  const toggleEffect = useCallback((type: VideoEffect["type"]) => {
+    setEffects((prev) => {
+      const existing = prev.find((e) => e.type === type);
+      if (existing) {
+        return prev.filter((e) => e.type !== type);
+      }
+      return [...prev, { type, intensity: 50 }];
+    });
+  }, []);
+
+  const updateEffectIntensity = useCallback((type: VideoEffect["type"], intensity: number) => {
+    setEffects((prev) => prev.map((e) => e.type === type ? { ...e, intensity } : e));
+  }, []);
+
+  const renderEffectsPanel = () => (
+    <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+      <View style={styles.panelInner}>
+        <Text style={[styles.panelTitle, { color: colors.foreground }]}>エフェクト</Text>
+        <Text style={{ color: colors.muted, fontSize: 12, marginBottom: 12 }}>
+          タップで有効/無効。スライダーで強度調整。
+        </Text>
+
+        {VIDEO_EFFECT_PRESETS.map((preset) => {
+          const active = effects.find((e) => e.type === preset.type);
+          return (
+            <View key={preset.type} style={{ marginBottom: 12 }}>
+              <Pressable
+                onPress={() => {
+                  toggleEffect(preset.type);
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                }}
+                style={({ pressed }) => [
+                  styles.effectRow,
+                  {
+                    borderColor: active ? colors.primary : colors.border,
+                    backgroundColor: active ? `${colors.primary}10` : "transparent",
+                  },
+                  pressed && { opacity: 0.7 },
+                ]}
+              >
+                <IconSymbol name={preset.icon as any} size={20} color={active ? colors.primary : colors.muted} />
+                <View style={{ flex: 1, marginLeft: 10 }}>
+                  <Text style={{ color: active ? colors.primary : colors.foreground, fontSize: 14, fontWeight: "600" }}>
+                    {preset.label}
+                  </Text>
+                  <Text style={{ color: colors.muted, fontSize: 11 }}>{preset.description}</Text>
+                </View>
+                {active && (
+                  <Text style={{ color: colors.primary, fontSize: 12, fontWeight: "700" }}>{active.intensity}%</Text>
+                )}
+              </Pressable>
+
+              {/* Intensity slider when active */}
+              {active && (
+                <View style={styles.sliderRow}>
+                  <Text style={[styles.sliderLabel, { color: colors.muted }]}>強度</Text>
+                  <Pressable onPress={() => updateEffectIntensity(preset.type, Math.max(0, active.intensity - 5))} style={({ pressed }) => [styles.fineBtn, { backgroundColor: colors.border }, pressed && { opacity: 0.6 }]}>
+                    <Text style={{ color: colors.foreground, fontSize: 14, fontWeight: "700" }}>−</Text>
+                  </Pressable>
+                  <View style={styles.sliderTrack}>
+                    <View style={[styles.sliderFill, { width: `${active.intensity}%`, backgroundColor: colors.primary }]} />
+                  </View>
+                  <Pressable onPress={() => updateEffectIntensity(preset.type, Math.min(100, active.intensity + 5))} style={({ pressed }) => [styles.fineBtn, { backgroundColor: colors.border }, pressed && { opacity: 0.6 }]}>
+                    <Text style={{ color: colors.foreground, fontSize: 14, fontWeight: "700" }}>+</Text>
+                  </Pressable>
+                  <Text style={{ color: colors.foreground, fontSize: 12, fontWeight: "600", width: 36, textAlign: "center" }}>{active.intensity}%</Text>
+                </View>
+              )}
+            </View>
+          );
+        })}
+
+        {effects.length > 0 && (
+          <Pressable
+            onPress={() => {
+              setEffects([]);
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+            }}
+            style={({ pressed }) => [
+              styles.applyBtn,
+              { backgroundColor: colors.error },
+              pressed && { opacity: 0.8 },
+            ]}
+          >
+            <Text style={styles.applyBtnText}>すべてクリア</Text>
+          </Pressable>
+        )}
+
+        <Pressable
+          onPress={applyChanges}
+          style={({ pressed }) => [
+            styles.applyBtn,
+            { backgroundColor: colors.primary, marginTop: 8 },
+            pressed && { opacity: 0.9, transform: [{ scale: 0.97 }] },
+          ]}
+        >
+          <Text style={styles.applyBtnText}>適用</Text>
+        </Pressable>
+      </View>
+    </ScrollView>
+  );
+
+  // ---- Color Adjustment Panel ----
+  const updateColorAdj = useCallback((key: ColorAdjustmentKey, value: number) => {
+    setColorAdj((prev) => ({ ...prev, [key]: value }));
+  }, []);
+
+  const renderColorPanel = () => (
+    <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+      <View style={styles.panelInner}>
+        <Text style={[styles.panelTitle, { color: colors.foreground }]}>カラー調整</Text>
+
+        {(Object.keys(COLOR_ADJUSTMENT_LABELS) as ColorAdjustmentKey[]).map((key) => {
+          const config = COLOR_ADJUSTMENT_LABELS[key];
+          const value = colorAdj[key];
+          const isDefault = value === DEFAULT_COLOR_ADJUSTMENTS[key];
+          const range = config.max - config.min;
+          const pct = ((value - config.min) / range) * 100;
+
+          return (
+            <View key={key} style={{ marginBottom: 12 }}>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                  <IconSymbol name={config.icon as any} size={14} color={isDefault ? colors.muted : colors.primary} />
+                  <Text style={{ color: isDefault ? colors.muted : colors.foreground, fontSize: 13, fontWeight: "600" }}>
+                    {config.label}
+                  </Text>
+                </View>
+                <Pressable onPress={() => updateColorAdj(key, DEFAULT_COLOR_ADJUSTMENTS[key])}>
+                  <Text style={{ color: isDefault ? colors.muted : colors.primary, fontSize: 12, fontWeight: "600" }}>
+                    {value}{isDefault ? "" : " ↺"}
+                  </Text>
+                </Pressable>
+              </View>
+              <View style={styles.sliderRow}>
+                <Pressable onPress={() => updateColorAdj(key, Math.max(config.min, value - 1))} style={({ pressed }) => [styles.fineBtn, { backgroundColor: colors.border }, pressed && { opacity: 0.6 }]}>
+                  <Text style={{ color: colors.foreground, fontSize: 14, fontWeight: "700" }}>−</Text>
+                </Pressable>
+                <View style={styles.sliderTrack}>
+                  {/* Center line for bipolar sliders */}
+                  {config.min < 0 && (
+                    <View style={{ position: "absolute", left: "50%", top: 4, bottom: 4, width: 1, backgroundColor: `${colors.muted}40` }} />
+                  )}
+                  <View
+                    style={[
+                      styles.sliderFill,
+                      config.min < 0
+                        ? value >= 0
+                          ? { left: "50%", width: `${(value / config.max) * 50}%`, backgroundColor: colors.primary }
+                          : { right: "50%", width: `${(Math.abs(value) / Math.abs(config.min)) * 50}%`, backgroundColor: colors.warning, left: undefined }
+                        : { width: `${pct}%`, backgroundColor: colors.primary },
+                    ]}
+                  />
+                </View>
+                <Pressable onPress={() => updateColorAdj(key, Math.min(config.max, value + 1))} style={({ pressed }) => [styles.fineBtn, { backgroundColor: colors.border }, pressed && { opacity: 0.6 }]}>
+                  <Text style={{ color: colors.foreground, fontSize: 14, fontWeight: "700" }}>+</Text>
+                </Pressable>
+                <TextInput
+                  value={String(value)}
+                  onChangeText={(val) => {
+                    const n = parseInt(val);
+                    if (!isNaN(n)) updateColorAdj(key, Math.max(config.min, Math.min(config.max, n)));
+                  }}
+                  keyboardType="numbers-and-punctuation"
+                  style={[styles.numberInput, { color: colors.foreground, borderColor: colors.border }]}
+                />
+              </View>
+            </View>
+          );
+        })}
+
+        {/* Reset all */}
+        <Pressable
+          onPress={() => {
+            setColorAdj({ ...DEFAULT_COLOR_ADJUSTMENTS });
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+          }}
+          style={({ pressed }) => [
+            styles.applyBtn,
+            { backgroundColor: colors.error },
+            pressed && { opacity: 0.8 },
+          ]}
+        >
+          <Text style={styles.applyBtnText}>リセット</Text>
+        </Pressable>
+
+        <Pressable
+          onPress={applyChanges}
+          style={({ pressed }) => [
+            styles.applyBtn,
+            { backgroundColor: colors.primary, marginTop: 8 },
+            pressed && { opacity: 0.9, transform: [{ scale: 0.97 }] },
+          ]}
+        >
+          <Text style={styles.applyBtnText}>適用</Text>
+        </Pressable>
+      </View>
+    </ScrollView>
+  );
+
   const renderToolbar = () => (
     <View
       style={[
@@ -2824,6 +3031,8 @@ export default function EditorScreen() {
         { key: "frame" as PanelType, icon: "rectangle.on.rectangle" as const, label: "フレーム" },
         { key: "transition" as PanelType, icon: "arrow.right.arrow.left" as const, label: "切替効果" },
         { key: "keyframe" as PanelType, icon: "diamond" as const, label: "キーフレーム" },
+        { key: "effects" as PanelType, icon: "sparkles" as const, label: "エフェクト" },
+        { key: "color" as PanelType, icon: "slider.horizontal.3" as const, label: "カラー" },
       ]).map((tool) => (
         <Pressable
           key={tool.key}
@@ -3483,6 +3692,14 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "600",
     paddingVertical: 0,
+  },
+  // ---- Effects ----
+  effectRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1.5,
   },
   positionRow: {
     flexDirection: "row",

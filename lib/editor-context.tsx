@@ -254,6 +254,92 @@ export interface VideoFilter {
   intensity: number;
 }
 
+// ---- Video Effects ----
+
+export type VideoEffectType =
+  | "blur"
+  | "vhs"
+  | "glitch"
+  | "zoom-pulse"
+  | "shake"
+  | "light-leak"
+  | "vignette"
+  | "grain"
+  | "rgb-split"
+  | "neon-glow";
+
+export interface VideoEffect {
+  type: VideoEffectType;
+  /** Intensity 0-100 */
+  intensity: number;
+}
+
+export const VIDEO_EFFECT_PRESETS: { type: VideoEffectType; label: string; icon: string; description: string }[] = [
+  { type: "blur", label: "ブラー", icon: "aqi.medium", description: "ぼかし効果" },
+  { type: "vhs", label: "VHS", icon: "tv", description: "レトロなVHS風ノイズ" },
+  { type: "glitch", label: "グリッチ", icon: "waveform.path.ecg", description: "デジタル映像乱れ" },
+  { type: "zoom-pulse", label: "ズームパルス", icon: "plus.magnifyingglass", description: "拍動するズーム効果" },
+  { type: "shake", label: "シェイク", icon: "iphone.gen3.radiowaves.left.and.right", description: "画面揺れ" },
+  { type: "light-leak", label: "ライトリーク", icon: "sun.max", description: "光漏れ効果" },
+  { type: "vignette", label: "ビネット", icon: "circle.dashed", description: "周辺減光" },
+  { type: "grain", label: "グレイン", icon: "circle.grid.3x3", description: "フィルム粒子" },
+  { type: "rgb-split", label: "RGB分離", icon: "paintpalette", description: "色ずれ効果" },
+  { type: "neon-glow", label: "ネオングロー", icon: "lightbulb", description: "ネオン発光" },
+];
+
+// ---- Color Adjustments ----
+
+export type ColorAdjustmentKey =
+  | "brightness"
+  | "contrast"
+  | "saturation"
+  | "exposure"
+  | "temperature"
+  | "highlights"
+  | "shadows"
+  | "sharpness"
+  | "fade"
+  | "vignetteAmount";
+
+export interface ColorAdjustments {
+  brightness: number;    // -100 to 100, default 0
+  contrast: number;      // -100 to 100, default 0
+  saturation: number;    // -100 to 100, default 0
+  exposure: number;      // -100 to 100, default 0
+  temperature: number;   // -100 to 100, default 0 (cold to warm)
+  highlights: number;    // -100 to 100, default 0
+  shadows: number;       // -100 to 100, default 0
+  sharpness: number;     // 0 to 100, default 0
+  fade: number;          // 0 to 100, default 0
+  vignetteAmount: number; // 0 to 100, default 0
+}
+
+export const DEFAULT_COLOR_ADJUSTMENTS: ColorAdjustments = {
+  brightness: 0,
+  contrast: 0,
+  saturation: 0,
+  exposure: 0,
+  temperature: 0,
+  highlights: 0,
+  shadows: 0,
+  sharpness: 0,
+  fade: 0,
+  vignetteAmount: 0,
+};
+
+export const COLOR_ADJUSTMENT_LABELS: Record<ColorAdjustmentKey, { label: string; icon: string; min: number; max: number }> = {
+  brightness: { label: "明るさ", icon: "sun.max", min: -100, max: 100 },
+  contrast: { label: "コントラスト", icon: "circle.lefthalf.filled", min: -100, max: 100 },
+  saturation: { label: "彩度", icon: "drop.fill", min: -100, max: 100 },
+  exposure: { label: "露出", icon: "camera.aperture", min: -100, max: 100 },
+  temperature: { label: "色温度", icon: "thermometer.medium", min: -100, max: 100 },
+  highlights: { label: "ハイライト", icon: "sun.min", min: -100, max: 100 },
+  shadows: { label: "シャドウ", icon: "moon", min: -100, max: 100 },
+  sharpness: { label: "シャープネス", icon: "diamond", min: 0, max: 100 },
+  fade: { label: "フェード", icon: "square.stack", min: 0, max: 100 },
+  vignetteAmount: { label: "ビネット", icon: "circle.dashed", min: 0, max: 100 },
+};
+
 export interface BGMTrack {
   id: string;
   title: string;
@@ -588,6 +674,10 @@ export interface VideoProject {
   tracks: TimelineTrack[];
   /** Aspect ratio (e.g. "16:9", "9:16") */
   aspectRatio?: string;
+  /** Video effects applied to the project */
+  effects?: VideoEffect[];
+  /** Color adjustments */
+  colorAdjustments?: ColorAdjustments;
 }
 
 const MAX_HISTORY = 50;
