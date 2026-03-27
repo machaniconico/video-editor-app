@@ -29,8 +29,8 @@ import { useEditor } from "@/lib/editor-context";
 import { useOrientation } from "@/hooks/use-orientation";
 import { launchImageLibraryAsync } from "expo-image-picker";
 import { MultiTrackTimeline } from "@/components/multi-track-timeline";
-import type { TimelineTrack, TransitionType, ClipTransition, Keyframe, KeyframeProperty, SpeedCurve, TextAnimationType, TextAlignment, TextOverlay as TextOverlayType, VideoEffect, ColorAdjustments, ColorAdjustmentKey, BlendMode, ChromaKeySettings } from "@/lib/editor-context";
-import { createDefaultTracks, TRANSITION_PRESETS, KEYFRAME_PROPERTY_LABELS, SPEED_CURVE_PRESETS, getSpeedAtPosition, TEXT_ANIMATION_PRESETS, FONT_FAMILIES, TEXT_TEMPLATES, ASPECT_RATIO_PRESETS, VIDEO_EFFECT_PRESETS, COLOR_ADJUSTMENT_LABELS, DEFAULT_COLOR_ADJUSTMENTS, BLEND_MODE_LABELS, DEFAULT_CHROMA_KEY } from "@/lib/editor-context";
+import type { TimelineTrack, TransitionType, ClipTransition, Keyframe, KeyframeProperty, SpeedCurve, TextAnimationType, TextAlignment, TextOverlay as TextOverlayType, VideoEffect, ColorAdjustments, ColorAdjustmentKey, BlendMode, ChromaKeySettings, TimelineMarker, ClipMask, LoudnessTarget } from "@/lib/editor-context";
+import { createDefaultTracks, TRANSITION_PRESETS, KEYFRAME_PROPERTY_LABELS, SPEED_CURVE_PRESETS, getSpeedAtPosition, TEXT_ANIMATION_PRESETS, FONT_FAMILIES, TEXT_TEMPLATES, ASPECT_RATIO_PRESETS, VIDEO_EFFECT_PRESETS, COLOR_ADJUSTMENT_LABELS, DEFAULT_COLOR_ADJUSTMENTS, BLEND_MODE_LABELS, DEFAULT_CHROMA_KEY, MARKER_COLORS, LOUDNESS_PRESETS } from "@/lib/editor-context";
 
 // Filter definitions
 const FILTERS = [
@@ -95,7 +95,7 @@ const BGM_TRACKS = [
 
 const BGM_CATEGORIES = ["すべて", "ポップ", "チル", "エピック", "アコースティック"];
 
-type PanelType = "none" | "trim" | "filter" | "text" | "music" | "speed" | "frame" | "transition" | "keyframe" | "effects" | "color" | "clip-tools" | "sticker" | "audio-tools";
+type PanelType = "none" | "trim" | "filter" | "text" | "music" | "speed" | "frame" | "transition" | "keyframe" | "effects" | "color" | "clip-tools" | "sticker" | "audio-tools" | "markers" | "mixer" | "mask" | "loudness" | "fx-control";
 
 // Frame layout definitions
 const FRAME_LAYOUTS: { id: import("@/lib/editor-context").FrameLayout; label: string; icon: string; slots: number }[] = [
@@ -156,6 +156,14 @@ export default function EditorScreen() {
 
   // Beat markers
   const [beatMarkers, setBeatMarkers] = useState<import("@/lib/editor-context").BeatMarker[]>(project?.beatMarkers ?? []);
+
+  // Timeline markers
+  const [markers, setMarkers] = useState<TimelineMarker[]>(project?.markers ?? []);
+  const [markerColor, setMarkerColor] = useState("#FF3B30");
+  const [markerLabel, setMarkerLabel] = useState("");
+
+  // Loudness
+  const [loudnessTarget, setLoudnessTarget] = useState<LoudnessTarget>(project?.loudnessSettings?.target ?? "streaming");
 
   // Current playback position for timeline playhead
   const [currentPlaybackTime, setCurrentPlaybackTime] = useState(0);
@@ -508,6 +516,9 @@ export default function EditorScreen() {
     updates.colorAdjustments = colorAdj;
     updates.stickers = stickers;
     updates.beatMarkers = beatMarkers;
+    updates.markers = markers;
+    const lPreset = LOUDNESS_PRESETS.find((p) => p.target === loudnessTarget);
+    if (lPreset) updates.loudnessSettings = { target: loudnessTarget, targetLUFS: lPreset.lufs, truePeakLimit: lPreset.truePeak };
 
     dispatch({ type: "UPDATE_CURRENT_PROJECT", payload: updates });
     setActivePanel("none");
@@ -936,6 +947,11 @@ export default function EditorScreen() {
         {activePanel === "clip-tools" && renderClipToolsPanel()}
         {activePanel === "sticker" && renderStickerPanel()}
         {activePanel === "audio-tools" && renderAudioToolsPanel()}
+        {activePanel === "markers" && renderMarkersPanel()}
+        {activePanel === "mixer" && renderMixerPanel()}
+        {activePanel === "mask" && renderMaskPanel()}
+        {activePanel === "loudness" && renderLoudnessPanel()}
+        {activePanel === "fx-control" && renderFxControlPanel()}
       </View>
     </Animated.View>
   );
@@ -3575,6 +3591,407 @@ export default function EditorScreen() {
     </ScrollView>
   );
 
+  // ---- Markers Panel ----
+  const renderMarkersPanel = () => (
+    <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+      <View style={styles.panelInner}>
+        <Text style={[styles.panelTitle, { color: colors.foreground }]}>マーカー＋メモ</Text>
+
+        <TextInput
+          value={markerLabel}
+          onChangeText={setMarkerLabel}
+          placeholder="メモを入力..."
+          placeholderTextColor={colors.muted}
+          style={[styles.textInputField, { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.background, marginBottom: 8 }]}
+        />
+
+        <Text style={[styles.subLabel, { color: colors.muted }]}>マーカーカラー</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
+          <View style={styles.colorRow}>
+            {MARKER_COLORS.map((c) => (
+              <Pressable key={c} onPress={() => setMarkerColor(c)} style={[styles.colorDotSmall, { backgroundColor: c }, markerColor === c && { borderColor: colors.primary, borderWidth: 2 }]} />
+            ))}
+          </View>
+        </ScrollView>
+
+        <Pressable
+          onPress={() => {
+            const newMarker: TimelineMarker = {
+              id: `mk_${Date.now()}`,
+              time: currentPlaybackTime,
+              color: markerColor,
+              label: markerLabel || `マーカー ${markers.length + 1}`,
+            };
+            setMarkers((prev) => [...prev, newMarker]);
+            setMarkerLabel("");
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+          }}
+          style={({ pressed }) => [styles.applyBtn, { backgroundColor: colors.primary }, pressed && { opacity: 0.8 }]}
+        >
+          <Text style={styles.applyBtnText}>現在位置にマーカー追加</Text>
+        </Pressable>
+
+        {markers.length > 0 && (
+          <View style={{ marginTop: 12 }}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 6 }}>
+              <Text style={{ color: colors.foreground, fontSize: 13, fontWeight: "600" }}>マーカー一覧 ({markers.length})</Text>
+              <Pressable onPress={() => setMarkers([])}><Text style={{ color: colors.error, fontSize: 12 }}>全削除</Text></Pressable>
+            </View>
+            {markers.sort((a, b) => a.time - b.time).map((mk) => (
+              <View key={mk.id} style={[styles.effectRow, { borderColor: mk.color, marginBottom: 6 }]}>
+                <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: mk.color, marginRight: 8 }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: colors.foreground, fontSize: 13, fontWeight: "600" }}>{mk.label}</Text>
+                  <Text style={{ color: colors.muted, fontSize: 11 }}>{mk.time.toFixed(1)}s</Text>
+                </View>
+                <Pressable onPress={() => setMarkers((prev) => prev.filter((m) => m.id !== mk.id))}>
+                  <IconSymbol name="trash" size={14} color={colors.error} />
+                </Pressable>
+              </View>
+            ))}
+          </View>
+        )}
+
+        <Pressable onPress={applyChanges} style={({ pressed }) => [styles.applyBtn, { backgroundColor: colors.primary, marginTop: 8 }, pressed && { opacity: 0.9 }]}>
+          <Text style={styles.applyBtnText}>適用</Text>
+        </Pressable>
+      </View>
+    </ScrollView>
+  );
+
+  // ---- Audio Mixer Panel ----
+  const renderMixerPanel = () => {
+    const allTracks = tracks.filter((t) => t.type === "audio" || t.type === "bgm");
+    return (
+      <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+        <View style={styles.panelInner}>
+          <Text style={[styles.panelTitle, { color: colors.foreground }]}>オーディオミキサー</Text>
+
+          {allTracks.length === 0 && (
+            <Text style={{ color: colors.muted, fontSize: 13, textAlign: "center", marginTop: 16 }}>音声トラックがありません</Text>
+          )}
+
+          {allTracks.map((track) => (
+            <View key={track.id} style={{ marginBottom: 16, padding: 10, borderRadius: 10, borderWidth: 1, borderColor: colors.border }}>
+              <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 8 }}>
+                <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: track.color, marginRight: 6 }} />
+                <Text style={{ color: colors.foreground, fontSize: 13, fontWeight: "600", flex: 1 }}>{track.label}</Text>
+                <Pressable onPress={() => setTracks((prev) => prev.map((t) => t.id === track.id ? { ...t, isMuted: !t.isMuted } : t))} style={{ marginRight: 6 }}>
+                  <Text style={{ color: track.isMuted ? colors.error : colors.muted, fontSize: 11, fontWeight: "700" }}>{track.isMuted ? "MUTE" : "M"}</Text>
+                </Pressable>
+                <Pressable onPress={() => setTracks((prev) => prev.map((t) => t.id === track.id ? { ...t, isSolo: !t.isSolo } : t))}>
+                  <Text style={{ color: track.isSolo ? colors.warning : colors.muted, fontSize: 11, fontWeight: "700" }}>{track.isSolo ? "SOLO" : "S"}</Text>
+                </Pressable>
+              </View>
+
+              {/* Volume fader */}
+              <View style={styles.sliderRow}>
+                <Text style={[styles.sliderLabel, { color: colors.muted }]}>音量</Text>
+                <Pressable onPress={() => setTracks((prev) => prev.map((t) => t.id === track.id ? { ...t, volume: Math.max(0, t.volume - 0.05) } : t))} style={({ pressed }) => [styles.fineBtn, { backgroundColor: colors.border }, pressed && { opacity: 0.6 }]}>
+                  <Text style={{ color: colors.foreground, fontSize: 14, fontWeight: "700" }}>−</Text>
+                </Pressable>
+                <View style={styles.sliderTrack}>
+                  <View style={[styles.sliderFill, { width: `${track.volume * 100}%`, backgroundColor: track.color }]} />
+                </View>
+                <Pressable onPress={() => setTracks((prev) => prev.map((t) => t.id === track.id ? { ...t, volume: Math.min(1, t.volume + 0.05) } : t))} style={({ pressed }) => [styles.fineBtn, { backgroundColor: colors.border }, pressed && { opacity: 0.6 }]}>
+                  <Text style={{ color: colors.foreground, fontSize: 14, fontWeight: "700" }}>+</Text>
+                </Pressable>
+                <Text style={{ color: colors.foreground, fontSize: 12, fontWeight: "600", width: 36, textAlign: "center" }}>{Math.round(track.volume * 100)}%</Text>
+              </View>
+            </View>
+          ))}
+
+          {/* Auto-ducking */}
+          <Text style={[styles.subLabel, { color: colors.muted }]}>自動ダッキング</Text>
+          <Text style={{ color: colors.muted, fontSize: 11, marginBottom: 8 }}>音声検出時にBGMを自動で下げる</Text>
+          {tracks.filter((t) => t.type === "bgm").map((bgmTrack) => (
+            <Pressable
+              key={`duck-${bgmTrack.id}`}
+              onPress={() => {
+                // Toggle auto-duck by adjusting volume
+                const newVol = bgmTrack.volume > 0.5 ? 0.3 : 0.7;
+                setTracks((prev) => prev.map((t) => t.id === bgmTrack.id ? { ...t, volume: newVol } : t));
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              }}
+              style={({ pressed }) => [
+                styles.effectRow,
+                { borderColor: bgmTrack.volume <= 0.5 ? colors.primary : colors.border, marginBottom: 8 },
+                pressed && { opacity: 0.7 },
+              ]}
+            >
+              <IconSymbol name="speaker.wave.2" size={18} color={bgmTrack.volume <= 0.5 ? colors.primary : colors.muted} />
+              <View style={{ flex: 1, marginLeft: 10 }}>
+                <Text style={{ color: colors.foreground, fontSize: 13, fontWeight: "600" }}>{bgmTrack.label}</Text>
+                <Text style={{ color: colors.muted, fontSize: 11 }}>{bgmTrack.volume <= 0.5 ? "ダッキング有効" : "通常"}</Text>
+              </View>
+            </Pressable>
+          ))}
+
+          <Pressable onPress={applyChanges} style={({ pressed }) => [styles.applyBtn, { backgroundColor: colors.primary, marginTop: 8 }, pressed && { opacity: 0.9 }]}>
+            <Text style={styles.applyBtnText}>適用</Text>
+          </Pressable>
+        </View>
+      </ScrollView>
+    );
+  };
+
+  // ---- Mask Panel ----
+  const renderMaskPanel = () => {
+    if (!selectedClipId) {
+      return (
+        <View style={styles.panelInner}>
+          <Text style={[styles.panelTitle, { color: colors.foreground }]}>マスク</Text>
+          <Text style={{ color: colors.muted, fontSize: 13, textAlign: "center", marginTop: 16 }}>クリップを選択してください</Text>
+        </View>
+      );
+    }
+    const clip = tracks.flatMap((t) => t.clips).find((c) => c.id === selectedClipId);
+    if (!clip) return null;
+    const clipMasks = clip.masks ?? [];
+
+    return (
+      <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+        <View style={styles.panelInner}>
+          <Text style={[styles.panelTitle, { color: colors.foreground }]}>マスク</Text>
+
+          <View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>
+            {(["rectangle", "ellipse"] as const).map((shape) => (
+              <Pressable
+                key={shape}
+                onPress={() => {
+                  const newMask: ClipMask = {
+                    id: `mask_${Date.now()}`,
+                    shape,
+                    inverted: false,
+                    feather: 10,
+                    x: 25, y: 25, width: 50, height: 50,
+                  };
+                  updateSelectedClip({ masks: [...clipMasks, newMask] });
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                }}
+                style={({ pressed }) => [styles.applyBtn, { backgroundColor: colors.primary, flex: 1 }, pressed && { opacity: 0.8 }]}
+              >
+                <Text style={styles.applyBtnText}>{shape === "rectangle" ? "□ 矩形" : "○ 楕円"}</Text>
+              </Pressable>
+            ))}
+          </View>
+
+          {clipMasks.map((mask, idx) => (
+            <View key={mask.id} style={{ marginBottom: 12, padding: 10, borderRadius: 10, borderWidth: 1, borderColor: colors.border }}>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <Text style={{ color: colors.foreground, fontSize: 13, fontWeight: "600" }}>
+                  {mask.shape === "rectangle" ? "矩形マスク" : "楕円マスク"} {idx + 1}
+                </Text>
+                <View style={{ flexDirection: "row", gap: 8 }}>
+                  <Pressable onPress={() => {
+                    const updated = clipMasks.map((m) => m.id === mask.id ? { ...m, inverted: !m.inverted } : m);
+                    updateSelectedClip({ masks: updated });
+                  }}>
+                    <Text style={{ color: mask.inverted ? colors.primary : colors.muted, fontSize: 11, fontWeight: "600" }}>{mask.inverted ? "反転ON" : "反転"}</Text>
+                  </Pressable>
+                  <Pressable onPress={() => updateSelectedClip({ masks: clipMasks.filter((m) => m.id !== mask.id) })}>
+                    <IconSymbol name="trash" size={14} color={colors.error} />
+                  </Pressable>
+                </View>
+              </View>
+
+              {/* Feather */}
+              <View style={styles.sliderRow}>
+                <Text style={[styles.sliderLabel, { color: colors.muted }]}>ぼかし</Text>
+                <View style={styles.sliderTrack}>
+                  <View style={[styles.sliderFill, { width: `${mask.feather * 2}%`, backgroundColor: colors.primary }]} />
+                </View>
+                <Pressable onPress={() => {
+                  const updated = clipMasks.map((m) => m.id === mask.id ? { ...m, feather: Math.min(50, m.feather + 5) } : m);
+                  updateSelectedClip({ masks: updated });
+                }} style={({ pressed }) => [styles.fineBtn, { backgroundColor: colors.border }, pressed && { opacity: 0.6 }]}>
+                  <Text style={{ color: colors.foreground, fontSize: 14, fontWeight: "700" }}>+</Text>
+                </Pressable>
+                <Text style={{ color: colors.foreground, fontSize: 12, fontWeight: "600", width: 30, textAlign: "center" }}>{mask.feather}</Text>
+              </View>
+
+              {/* Position/Size */}
+              {(["x", "y", "width", "height"] as const).map((prop) => {
+                const labels: Record<string, string> = { x: "X", y: "Y", width: "幅", height: "高さ" };
+                return (
+                  <View key={prop} style={styles.sliderRow}>
+                    <Text style={[styles.sliderLabel, { color: colors.muted }]}>{labels[prop]}</Text>
+                    <Pressable onPress={() => {
+                      const updated = clipMasks.map((m) => m.id === mask.id ? { ...m, [prop]: Math.max(0, m[prop] - 2) } : m);
+                      updateSelectedClip({ masks: updated });
+                    }} style={({ pressed }) => [styles.fineBtn, { backgroundColor: colors.border }, pressed && { opacity: 0.6 }]}>
+                      <Text style={{ color: colors.foreground, fontSize: 14, fontWeight: "700" }}>−</Text>
+                    </Pressable>
+                    <View style={styles.sliderTrack}>
+                      <View style={[styles.sliderFill, { width: `${mask[prop]}%`, backgroundColor: colors.primary }]} />
+                    </View>
+                    <Pressable onPress={() => {
+                      const updated = clipMasks.map((m) => m.id === mask.id ? { ...m, [prop]: Math.min(100, m[prop] + 2) } : m);
+                      updateSelectedClip({ masks: updated });
+                    }} style={({ pressed }) => [styles.fineBtn, { backgroundColor: colors.border }, pressed && { opacity: 0.6 }]}>
+                      <Text style={{ color: colors.foreground, fontSize: 14, fontWeight: "700" }}>+</Text>
+                    </Pressable>
+                    <Text style={{ color: colors.foreground, fontSize: 12, fontWeight: "600", width: 30, textAlign: "center" }}>{Math.round(mask[prop])}%</Text>
+                  </View>
+                );
+              })}
+            </View>
+          ))}
+
+          <Pressable onPress={applyChanges} style={({ pressed }) => [styles.applyBtn, { backgroundColor: colors.primary, marginTop: 4 }, pressed && { opacity: 0.9 }]}>
+            <Text style={styles.applyBtnText}>適用</Text>
+          </Pressable>
+        </View>
+      </ScrollView>
+    );
+  };
+
+  // ---- Loudness Panel ----
+  const renderLoudnessPanel = () => (
+    <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+      <View style={styles.panelInner}>
+        <Text style={[styles.panelTitle, { color: colors.foreground }]}>ラウドネス正規化</Text>
+        <Text style={{ color: colors.muted, fontSize: 12, marginBottom: 12 }}>音量を基準値に自動調整します</Text>
+
+        {LOUDNESS_PRESETS.map((preset) => {
+          const isActive = loudnessTarget === preset.target;
+          return (
+            <Pressable
+              key={preset.target}
+              onPress={() => {
+                setLoudnessTarget(preset.target);
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              }}
+              style={({ pressed }) => [
+                styles.effectRow,
+                { borderColor: isActive ? colors.primary : colors.border, backgroundColor: isActive ? `${colors.primary}10` : "transparent", marginBottom: 8 },
+                pressed && { opacity: 0.7 },
+              ]}
+            >
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: isActive ? colors.primary : colors.foreground, fontSize: 14, fontWeight: "600" }}>{preset.label}</Text>
+                <Text style={{ color: colors.muted, fontSize: 11 }}>True Peak: {preset.truePeak} dBTP</Text>
+              </View>
+              {isActive && <IconSymbol name="checkmark" size={18} color={colors.primary} />}
+            </Pressable>
+          );
+        })}
+
+        <Pressable onPress={applyChanges} style={({ pressed }) => [styles.applyBtn, { backgroundColor: colors.primary, marginTop: 8 }, pressed && { opacity: 0.9 }]}>
+          <Text style={styles.applyBtnText}>適用</Text>
+        </Pressable>
+      </View>
+    </ScrollView>
+  );
+
+  // ---- Effect Control Panel ----
+  const renderFxControlPanel = () => {
+    if (!selectedClipId) {
+      return (
+        <View style={styles.panelInner}>
+          <Text style={[styles.panelTitle, { color: colors.foreground }]}>エフェクトコントロール</Text>
+          <Text style={{ color: colors.muted, fontSize: 13, textAlign: "center", marginTop: 16 }}>クリップを選択してください</Text>
+        </View>
+      );
+    }
+    const clip = tracks.flatMap((t) => t.clips).find((c) => c.id === selectedClipId);
+    if (!clip) return null;
+
+    return (
+      <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+        <View style={styles.panelInner}>
+          <Text style={[styles.panelTitle, { color: colors.foreground }]}>エフェクトコントロール</Text>
+          <Text style={{ color: colors.muted, fontSize: 12, marginBottom: 12 }}>クリップ「{clip.name}」の全パラメータ</Text>
+
+          {/* Basic */}
+          <Text style={[styles.subLabel, { color: colors.foreground, fontWeight: "700" }]}>基本</Text>
+          <View style={{ marginBottom: 8 }}>
+            <Text style={{ color: colors.muted, fontSize: 11 }}>速度: {clip.speed}x | 音量: {Math.round(clip.volume * 100)}%</Text>
+            <Text style={{ color: colors.muted, fontSize: 11 }}>トリム: {clip.trimStart.toFixed(1)}s - {clip.trimEnd.toFixed(1)}s</Text>
+            <Text style={{ color: colors.muted, fontSize: 11 }}>オフセット: {clip.timelineOffset.toFixed(1)}s</Text>
+            {clip.isReversed && <Text style={{ color: colors.warning, fontSize: 11 }}>逆再生: ON</Text>}
+            {clip.isStabilized && <Text style={{ color: colors.success, fontSize: 11 }}>手ブレ補正: ON</Text>}
+            {clip.isFlippedH && <Text style={{ color: colors.primary, fontSize: 11 }}>左右反転: ON</Text>}
+            {clip.isFlippedV && <Text style={{ color: colors.primary, fontSize: 11 }}>上下反転: ON</Text>}
+          </View>
+
+          {/* Transition */}
+          {clip.transition && (
+            <>
+              <Text style={[styles.subLabel, { color: colors.foreground, fontWeight: "700" }]}>トランジション</Text>
+              <Text style={{ color: colors.muted, fontSize: 11, marginBottom: 8 }}>
+                {TRANSITION_PRESETS.find((p) => p.type === clip.transition?.type)?.label ?? ""} ({clip.transition.duration}s)
+              </Text>
+            </>
+          )}
+
+          {/* Speed Curve */}
+          {clip.speedCurve && (
+            <>
+              <Text style={[styles.subLabel, { color: colors.foreground, fontWeight: "700" }]}>速度カーブ</Text>
+              <Text style={{ color: colors.muted, fontSize: 11, marginBottom: 8 }}>{clip.speedCurve.name}</Text>
+            </>
+          )}
+
+          {/* Blend Mode */}
+          {clip.blendMode && (
+            <>
+              <Text style={[styles.subLabel, { color: colors.foreground, fontWeight: "700" }]}>ブレンドモード</Text>
+              <Text style={{ color: colors.muted, fontSize: 11, marginBottom: 8 }}>
+                {BLEND_MODE_LABELS.find((b) => b.mode === clip.blendMode)?.label ?? clip.blendMode}
+              </Text>
+            </>
+          )}
+
+          {/* Chroma Key */}
+          {clip.chromaKey?.enabled && (
+            <>
+              <Text style={[styles.subLabel, { color: colors.foreground, fontWeight: "700" }]}>クロマキー</Text>
+              <Text style={{ color: colors.muted, fontSize: 11, marginBottom: 8 }}>
+                カラー: {clip.chromaKey.color} | 許容: {clip.chromaKey.similarity}% | 滑らか: {clip.chromaKey.smoothness}%
+              </Text>
+            </>
+          )}
+
+          {/* Keyframes */}
+          {clip.keyframes && clip.keyframes.length > 0 && (
+            <>
+              <Text style={[styles.subLabel, { color: colors.foreground, fontWeight: "700" }]}>キーフレーム ({clip.keyframes.length})</Text>
+              {clip.keyframes.sort((a, b) => a.time - b.time).slice(0, 10).map((kf) => (
+                <Text key={kf.id} style={{ color: colors.muted, fontSize: 11 }}>
+                  {kf.time.toFixed(1)}s: {KEYFRAME_PROPERTY_LABELS[kf.property].label} = {kf.value} ({kf.easing})
+                </Text>
+              ))}
+              {clip.keyframes.length > 10 && <Text style={{ color: colors.muted, fontSize: 11 }}>...他{clip.keyframes.length - 10}個</Text>}
+            </>
+          )}
+
+          {/* Masks */}
+          {clip.masks && clip.masks.length > 0 && (
+            <>
+              <Text style={[styles.subLabel, { color: colors.foreground, fontWeight: "700", marginTop: 4 }]}>マスク ({clip.masks.length})</Text>
+              {clip.masks.map((m, i) => (
+                <Text key={m.id} style={{ color: colors.muted, fontSize: 11 }}>
+                  {i + 1}. {m.shape} ({m.width}x{m.height}) {m.inverted ? "[反転]" : ""} ぼかし:{m.feather}
+                </Text>
+              ))}
+            </>
+          )}
+
+          {/* Crop */}
+          {clip.crop && (clip.crop.top > 0 || clip.crop.right > 0 || clip.crop.bottom > 0 || clip.crop.left > 0) && (
+            <>
+              <Text style={[styles.subLabel, { color: colors.foreground, fontWeight: "700", marginTop: 4 }]}>クロップ</Text>
+              <Text style={{ color: colors.muted, fontSize: 11, marginBottom: 8 }}>
+                上:{clip.crop.top}% 右:{clip.crop.right}% 下:{clip.crop.bottom}% 左:{clip.crop.left}%
+              </Text>
+            </>
+          )}
+        </View>
+      </ScrollView>
+    );
+  };
+
   // Toolbar groups
   const TOOLBAR_GROUPS = [
     {
@@ -3613,6 +4030,8 @@ export default function EditorScreen() {
       items: [
         { key: "music" as PanelType, icon: "music.note" as const, label: "BGM" },
         { key: "audio-tools" as PanelType, icon: "waveform" as const, label: "音声ツール" },
+        { key: "mixer" as PanelType, icon: "slider.vertical.3" as const, label: "ミキサー" },
+        { key: "loudness" as PanelType, icon: "speaker.wave.3" as const, label: "ラウドネス" },
       ],
     },
     {
@@ -3623,6 +4042,16 @@ export default function EditorScreen() {
         { key: "clip-tools" as PanelType, icon: "wrench" as const, label: "クリップツール" },
         { key: "transition" as PanelType, icon: "arrow.right.arrow.left" as const, label: "切替効果" },
         { key: "keyframe" as PanelType, icon: "diamond" as const, label: "キーフレーム" },
+        { key: "mask" as PanelType, icon: "square.dashed" as const, label: "マスク" },
+        { key: "fx-control" as PanelType, icon: "list.bullet" as const, label: "FXコントロール" },
+      ],
+    },
+    {
+      id: "markers",
+      icon: "flag" as const,
+      label: "マーカー",
+      items: [
+        { key: "markers" as PanelType, icon: "flag" as const, label: "マーカー＋メモ" },
       ],
     },
   ];

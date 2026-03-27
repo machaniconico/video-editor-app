@@ -524,12 +524,74 @@ export interface StickerOverlay {
   endTime: number;
 }
 
-// ---- Beat Marker ----
+// ---- Beat Marker & Timeline Marker ----
 
 export interface BeatMarker {
   /** Time position in seconds */
   time: number;
 }
+
+export interface TimelineMarker {
+  id: string;
+  /** Time position in seconds */
+  time: number;
+  /** Color for the marker */
+  color: string;
+  /** Label/memo text */
+  label: string;
+}
+
+export const MARKER_COLORS = ["#FF3B30", "#FF9500", "#FFD60A", "#34C759", "#007AFF", "#AF52DE", "#FF2D55", "#FFFFFF"];
+
+// ---- Audio Mixer ----
+
+export interface AudioMixerTrackState {
+  trackId: string;
+  volume: number;
+  pan: number; // -1 (left) to 1 (right)
+  isMuted: boolean;
+  isSolo: boolean;
+  /** Auto-ducking: reduce volume when speech is detected */
+  autoDuck: boolean;
+  autoDuckAmount: number; // 0-100, how much to reduce
+}
+
+// ---- Mask ----
+
+export type MaskShape = "rectangle" | "ellipse" | "custom";
+
+export interface ClipMask {
+  id: string;
+  shape: MaskShape;
+  /** Invert the mask (effect outside instead of inside) */
+  inverted: boolean;
+  /** Feather/blur amount for mask edge (0-50) */
+  feather: number;
+  /** Rectangle/ellipse bounds as percentages (0-100) */
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+// ---- Loudness Normalization ----
+
+export type LoudnessTarget = "broadcast" | "streaming" | "podcast" | "custom";
+
+export interface LoudnessSettings {
+  target: LoudnessTarget;
+  /** Target LUFS value */
+  targetLUFS: number;
+  /** True peak limit in dBTP */
+  truePeakLimit: number;
+}
+
+export const LOUDNESS_PRESETS: { target: LoudnessTarget; label: string; lufs: number; truePeak: number }[] = [
+  { target: "broadcast", label: "放送基準 (-24 LUFS)", lufs: -24, truePeak: -2 },
+  { target: "streaming", label: "配信向け (-14 LUFS)", lufs: -14, truePeak: -1 },
+  { target: "podcast", label: "ポッドキャスト (-16 LUFS)", lufs: -16, truePeak: -1.5 },
+  { target: "custom", label: "カスタム", lufs: -14, truePeak: -1 },
+];
 
 // ---- Transition types ----
 
@@ -831,6 +893,8 @@ export interface TimelineClip {
   isFlippedV?: boolean;
   /** Crop rectangle (percentage 0-100) */
   crop?: { top: number; right: number; bottom: number; left: number };
+  /** Masks applied to this clip */
+  masks?: ClipMask[];
 }
 
 export interface TimelineTrack {
@@ -882,6 +946,12 @@ export interface VideoProject {
   beatMarkers?: BeatMarker[];
   /** Voice over recordings */
   voiceOvers?: { uri: string; startTime: number; duration: number; volume: number }[];
+  /** Timeline markers with memos */
+  markers?: TimelineMarker[];
+  /** Loudness normalization settings */
+  loudnessSettings?: LoudnessSettings;
+  /** Audio mixer state per track */
+  audioMixerState?: AudioMixerTrackState[];
 }
 
 const MAX_HISTORY = 50;
