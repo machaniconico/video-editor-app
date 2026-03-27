@@ -40,6 +40,8 @@ interface MultiTrackTimelineProps {
   onTextOverlaySelect?: (id: string | null) => void;
   /** Currently selected text overlay id */
   selectedTextId?: string | null;
+  /** Callback when user drags the playhead to seek */
+  onSeek?: (time: number) => void;
 }
 
 // Zoom: continuous seconds-per-screen (not discrete levels)
@@ -84,6 +86,7 @@ export function MultiTrackTimeline({
   onTextOverlaysChange,
   onTextOverlaySelect,
   selectedTextId,
+  onSeek,
 }: MultiTrackTimelineProps) {
   const colors = useColors();
   const [secondsPerScreen, setSecondsPerScreen] = useState(30);
@@ -123,6 +126,39 @@ export function MultiTrackTimeline({
   const haptic = useCallback((style: Haptics.ImpactFeedbackStyle = Haptics.ImpactFeedbackStyle.Light) => {
     if (Platform.OS !== "web") Haptics.impactAsync(style);
   }, []);
+
+  // ---- Web pointer events for trim dragging ----
+  useEffect(() => {
+    if (Platform.OS !== "web") return;
+    if (!activeDrag || (activeDrag.mode !== "trim-left" && activeDrag.mode !== "trim-right")) return;
+
+    const onPointerMove = (e: PointerEvent) => {
+      const drag = dragRef.current;
+      if (drag.mode !== "trim-left" && drag.mode !== "trim-right") return;
+      const dx = e.pageX - drag.startX;
+      const deltaSec = dx / ppsRef.current;
+      if (drag.mode === "trim-left") {
+        const maxDelta = drag.originalClip.trimEnd - drag.originalClip.trimStart - 0.5;
+        const minDelta = -drag.originalClip.trimStart;
+        setTrimLeftDelta(Math.max(minDelta, Math.min(maxDelta, deltaSec)));
+      } else {
+        const maxDelta = drag.originalClip.duration - drag.originalClip.trimEnd;
+        const minDelta = -(drag.originalClip.trimEnd - drag.originalClip.trimStart - 0.5);
+        setTrimRightDelta(Math.max(minDelta, Math.min(maxDelta, deltaSec)));
+      }
+    };
+
+    const onPointerUp = () => {
+      onTrimEnd();
+    };
+
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+    return () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+    };
+  }, [activeDrag, onTrimEnd]);
 
   // ---- Zoom controls ----
   const zoomIn = () => {
@@ -416,7 +452,7 @@ export function MultiTrackTimeline({
     }
   };
 
-  const onTrimEnd = () => {
+  const onTrimEnd = useCallback(() => {
     const drag = dragRef.current;
     if (drag.mode !== "trim-left" && drag.mode !== "trim-right") return;
 
@@ -444,7 +480,7 @@ export function MultiTrackTimeline({
     setActiveDrag(null);
     setTrimLeftDelta(0);
     setTrimRightDelta(0);
-  };
+  }, [tracks, trimLeftDelta, trimRightDelta, onTracksChange]);
 
   // ---- Long press + drag move (horizontal only, same track) ----
   const startMoveDrag = (
@@ -595,9 +631,6 @@ export function MultiTrackTimeline({
             st.trimHandleHitArea,
             { left: 0 },
           ]}
-          onPressIn={(evt) => {
-            startTrimDrag("trim-left", track.id, clip, evt as any);
-          }}
           onStartShouldSetResponder={() => true}
           onMoveShouldSetResponder={() => true}
           onStartShouldSetResponderCapture={() => true}
@@ -609,6 +642,27 @@ export function MultiTrackTimeline({
           onResponderMove={onTrimMove}
           onResponderRelease={onTrimEnd}
           onResponderTerminate={onTrimEnd}
+          {...(Platform.OS === "web" ? {
+            onPointerDown: (e: any) => {
+              e.stopPropagation();
+              const trackIndex = tracks.findIndex((t) => t.id === track.id);
+              dragRef.current = {
+                mode: "trim-left",
+                trackId: track.id,
+                clipId: clip.id,
+                originalClip: { ...clip },
+                originalTrackIndex: trackIndex,
+                longPressTimer: null,
+                isLongPress: false,
+                startX: e.pageX,
+                startY: e.pageY,
+              };
+              setActiveDrag({ mode: "trim-left", clipId: clip.id });
+              setTrimLeftDelta(0);
+              setTrimRightDelta(0);
+              haptic();
+            },
+          } : {})}
         >
           <View
             style={[
@@ -725,9 +779,6 @@ export function MultiTrackTimeline({
             st.trimHandleHitArea,
             { right: 0 },
           ]}
-          onPressIn={(evt) => {
-            startTrimDrag("trim-right", track.id, clip, evt as any);
-          }}
           onStartShouldSetResponder={() => true}
           onMoveShouldSetResponder={() => true}
           onStartShouldSetResponderCapture={() => true}
@@ -739,6 +790,27 @@ export function MultiTrackTimeline({
           onResponderMove={onTrimMove}
           onResponderRelease={onTrimEnd}
           onResponderTerminate={onTrimEnd}
+          {...(Platform.OS === "web" ? {
+            onPointerDown: (e: any) => {
+              e.stopPropagation();
+              const trackIndex = tracks.findIndex((t) => t.id === track.id);
+              dragRef.current = {
+                mode: "trim-right",
+                trackId: track.id,
+                clipId: clip.id,
+                originalClip: { ...clip },
+                originalTrackIndex: trackIndex,
+                longPressTimer: null,
+                isLongPress: false,
+                startX: e.pageX,
+                startY: e.pageY,
+              };
+              setActiveDrag({ mode: "trim-right", clipId: clip.id });
+              setTrimLeftDelta(0);
+              setTrimRightDelta(0);
+              haptic();
+            },
+          } : {})}
         >
           <View
             style={[
@@ -854,17 +926,48 @@ export function MultiTrackTimeline({
             </View>
           </View>
 
-          {/* Playhead line (spans ruler + all tracks) */}
+          {/* Playhead line (spans ruler + all tracks) - draggable */}
           {currentTime >= 0 && currentTime <= totalDuration && (
             <View
               style={[
                 st.playhead,
                 { left: 120 + currentTime * pixelsPerSecond - 1 },
               ]}
-              pointerEvents="none"
+              pointerEvents="box-none"
             >
-              <View style={st.playheadHead} />
-              <View style={st.playheadLine} />
+              <View
+                style={st.playheadHead}
+                onStartShouldSetResponder={() => !!onSeek}
+                onMoveShouldSetResponder={() => !!onSeek}
+                onResponderGrant={() => {}}
+                onResponderMove={(evt) => {
+                  if (!onSeek) return;
+                  // Use pageX relative to the timeline offset
+                  const dx = evt.nativeEvent.locationX;
+                  const newTime = Math.max(0, Math.min(totalDuration, currentTime + (dx / pixelsPerSecond)));
+                  onSeek(newTime);
+                }}
+                // Web: also handle via pointer events
+                {...(Platform.OS === "web" ? {
+                  onPointerDown: (e: any) => {
+                    if (!onSeek) return;
+                    const startX = e.pageX;
+                    const startTime = currentTime;
+                    const onMove = (me: PointerEvent) => {
+                      const dx = me.pageX - startX;
+                      const newTime = Math.max(0, Math.min(totalDuration, startTime + dx / pixelsPerSecond));
+                      onSeek(newTime);
+                    };
+                    const onUp = () => {
+                      window.removeEventListener("pointermove", onMove);
+                      window.removeEventListener("pointerup", onUp);
+                    };
+                    window.addEventListener("pointermove", onMove);
+                    window.addEventListener("pointerup", onUp);
+                  },
+                } : {})}
+              />
+              <View style={st.playheadLine} pointerEvents="none" />
             </View>
           )}
 
@@ -1554,11 +1657,13 @@ const st = StyleSheet.create({
     alignItems: "center",
   },
   playheadHead: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
     backgroundColor: PLAYHEAD_COLOR,
-    marginTop: 1,
+    marginTop: 0,
+    marginLeft: -7,
+    ...(Platform.OS === "web" ? { cursor: "grab" as any } : {}),
   },
   playheadLine: {
     width: 2,

@@ -3813,6 +3813,10 @@ export default function EditorScreen() {
                   onTextOverlaysChange={setTextOverlays}
                   onTextOverlaySelect={setSelectedTextId}
                   selectedTextId={selectedTextId}
+                  onSeek={(time) => {
+                    player.currentTime = time;
+                    setCurrentPlaybackTime(time);
+                  }}
                 />
               )}
             </View>
