@@ -597,6 +597,8 @@ export function MultiTrackTimeline({
           ]}
           onStartShouldSetResponder={() => true}
           onMoveShouldSetResponder={() => true}
+          onStartShouldSetResponderCapture={() => true}
+          onMoveShouldSetResponderCapture={() => true}
           onResponderGrant={(evt) => {
             evt.stopPropagation?.();
             startTrimDrag("trim-left", track.id, clip, evt);
@@ -722,6 +724,8 @@ export function MultiTrackTimeline({
           ]}
           onStartShouldSetResponder={() => true}
           onMoveShouldSetResponder={() => true}
+          onStartShouldSetResponderCapture={() => true}
+          onMoveShouldSetResponderCapture={() => true}
           onResponderGrant={(evt) => {
             evt.stopPropagation?.();
             startTrimDrag("trim-right", track.id, clip, evt);
@@ -1314,10 +1318,12 @@ const st = StyleSheet.create({
     position: "absolute",
     top: 0,
     bottom: 0,
-    width: HANDLE_HIT_SLOP,
-    zIndex: 20,
+    width: HANDLE_HIT_SLOP + 10,
+    zIndex: 30,
     alignItems: "center",
     justifyContent: "center",
+    // Ensure touch target is large enough on web
+    ...(Platform.OS === "web" ? { cursor: "col-resize" as any } : {}),
   },
   // Visible trim handle bar
   trimHandleVisible: {
