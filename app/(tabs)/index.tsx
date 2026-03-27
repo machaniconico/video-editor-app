@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useState } from "react";
+import { useEffect, useCallback, useState, useRef } from "react";
 import {
   Text,
   View,
@@ -20,11 +20,15 @@ import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useColors } from "@/hooks/use-colors";
 import { useEditor, type VideoProject, ASPECT_RATIO_PRESETS, PROJECT_TEMPLATES, DEFAULT_COLOR_ADJUSTMENTS } from "@/lib/editor-context";
 import { SwipeableRow } from "@/components/swipeable-row";
+import { Onboarding, isOnboardingCompleted } from "@/components/onboarding";
 
 export default function HomeScreen() {
   const colors = useColors();
   const router = useRouter();
   const { state, dispatch, loadProjects, saveProjects, createProject } = useEditor();
+
+  // Onboarding
+  const [showOnboarding, setShowOnboarding] = useState<boolean | null>(null);
 
   // Confirmation dialog state (for web fallback)
   const [deleteTarget, setDeleteTarget] = useState<VideoProject | null>(null);
@@ -40,6 +44,7 @@ export default function HomeScreen() {
 
   useEffect(() => {
     loadProjects();
+    isOnboardingCompleted().then((completed) => setShowOnboarding(!completed));
   }, [loadProjects]);
 
   const pickVideo = useCallback(async () => {
@@ -243,6 +248,11 @@ export default function HomeScreen() {
       </Pressable>
     </SwipeableRow>
   );
+
+  // Show onboarding if not completed
+  if (showOnboarding === true) {
+    return <Onboarding onComplete={() => setShowOnboarding(false)} />;
+  }
 
   return (
     <ScreenContainer containerClassName="bg-background">
