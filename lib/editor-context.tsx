@@ -171,6 +171,135 @@ function applyEasing(t: number, easing: Keyframe["easing"]): number {
   }
 }
 
+// ---- Speed curve types ----
+
+export interface SpeedCurvePoint {
+  /** Normalized position in clip (0-1) */
+  position: number;
+  /** Speed multiplier at this point */
+  speed: number;
+}
+
+export interface SpeedCurve {
+  /** Name of the curve preset or "custom" */
+  name: string;
+  /** Control points defining the speed over time */
+  points: SpeedCurvePoint[];
+}
+
+export const SPEED_CURVE_PRESETS: { name: string; label: string; points: SpeedCurvePoint[] }[] = [
+  {
+    name: "constant",
+    label: "一定",
+    points: [
+      { position: 0, speed: 1 },
+      { position: 1, speed: 1 },
+    ],
+  },
+  {
+    name: "montage",
+    label: "モンタージュ",
+    points: [
+      { position: 0, speed: 0.5 },
+      { position: 0.2, speed: 2.0 },
+      { position: 0.4, speed: 0.5 },
+      { position: 0.6, speed: 2.0 },
+      { position: 0.8, speed: 0.5 },
+      { position: 1, speed: 1.0 },
+    ],
+  },
+  {
+    name: "hero",
+    label: "ヒーロー",
+    points: [
+      { position: 0, speed: 1.0 },
+      { position: 0.3, speed: 0.2 },
+      { position: 0.5, speed: 0.2 },
+      { position: 0.7, speed: 3.0 },
+      { position: 1, speed: 1.0 },
+    ],
+  },
+  {
+    name: "bullet-time",
+    label: "バレットタイム",
+    points: [
+      { position: 0, speed: 1.0 },
+      { position: 0.2, speed: 1.0 },
+      { position: 0.3, speed: 0.1 },
+      { position: 0.7, speed: 0.1 },
+      { position: 0.8, speed: 1.0 },
+      { position: 1, speed: 1.0 },
+    ],
+  },
+  {
+    name: "jump-cut",
+    label: "ジャンプカット",
+    points: [
+      { position: 0, speed: 1.0 },
+      { position: 0.24, speed: 1.0 },
+      { position: 0.25, speed: 4.0 },
+      { position: 0.49, speed: 4.0 },
+      { position: 0.5, speed: 1.0 },
+      { position: 0.74, speed: 1.0 },
+      { position: 0.75, speed: 4.0 },
+      { position: 1, speed: 4.0 },
+    ],
+  },
+  {
+    name: "ease-in",
+    label: "イーズイン",
+    points: [
+      { position: 0, speed: 0.3 },
+      { position: 0.5, speed: 0.8 },
+      { position: 1, speed: 2.0 },
+    ],
+  },
+  {
+    name: "ease-out",
+    label: "イーズアウト",
+    points: [
+      { position: 0, speed: 2.0 },
+      { position: 0.5, speed: 0.8 },
+      { position: 1, speed: 0.3 },
+    ],
+  },
+  {
+    name: "ramp-up",
+    label: "加速",
+    points: [
+      { position: 0, speed: 0.5 },
+      { position: 1, speed: 3.0 },
+    ],
+  },
+  {
+    name: "ramp-down",
+    label: "減速",
+    points: [
+      { position: 0, speed: 3.0 },
+      { position: 1, speed: 0.5 },
+    ],
+  },
+];
+
+/**
+ * Get the speed at a given normalized position (0-1) in a speed curve.
+ * Linearly interpolates between control points.
+ */
+export function getSpeedAtPosition(curve: SpeedCurve, position: number): number {
+  const pts = curve.points;
+  if (pts.length === 0) return 1;
+  if (position <= pts[0].position) return pts[0].speed;
+  if (position >= pts[pts.length - 1].position) return pts[pts.length - 1].speed;
+
+  for (let i = 0; i < pts.length - 1; i++) {
+    if (position >= pts[i].position && position <= pts[i + 1].position) {
+      const t = (position - pts[i].position) / (pts[i + 1].position - pts[i].position);
+      return pts[i].speed + (pts[i + 1].speed - pts[i].speed) * t;
+    }
+  }
+  return 1;
+}
+
 // ---- Multi-track types ----
 
 export type TrackType = "video" | "audio" | "bgm";
@@ -197,6 +326,8 @@ export interface TimelineClip {
   transition?: ClipTransition;
   /** Keyframe animations for this clip */
   keyframes?: Keyframe[];
+  /** Speed curve for variable speed playback */
+  speedCurve?: SpeedCurve;
 }
 
 export interface TimelineTrack {

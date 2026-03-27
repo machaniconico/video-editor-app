@@ -668,6 +668,11 @@ export function MultiTrackTimeline({
                 {clip.speed}x
               </Text>
             )}
+            {clip.speedCurve && (
+              <Text style={[st.clipSpeed, { color: `${track.color}AA` }]}>
+                ⚡{clip.speedCurve.name}
+              </Text>
+            )}
           </View>
           {(track.type === "audio" || track.type === "bgm") && (
             <View style={st.waveformContainer}>

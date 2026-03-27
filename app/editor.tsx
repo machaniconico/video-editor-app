@@ -29,8 +29,8 @@ import { useEditor } from "@/lib/editor-context";
 import { useOrientation } from "@/hooks/use-orientation";
 import { launchImageLibraryAsync } from "expo-image-picker";
 import { MultiTrackTimeline } from "@/components/multi-track-timeline";
-import type { TimelineTrack, TransitionType, ClipTransition, Keyframe, KeyframeProperty } from "@/lib/editor-context";
-import { createDefaultTracks, TRANSITION_PRESETS, KEYFRAME_PROPERTY_LABELS } from "@/lib/editor-context";
+import type { TimelineTrack, TransitionType, ClipTransition, Keyframe, KeyframeProperty, SpeedCurve } from "@/lib/editor-context";
+import { createDefaultTracks, TRANSITION_PRESETS, KEYFRAME_PROPERTY_LABELS, SPEED_CURVE_PRESETS, getSpeedAtPosition } from "@/lib/editor-context";
 
 // Filter definitions
 const FILTERS = [
@@ -1581,6 +1581,102 @@ export default function EditorScreen() {
             </Pressable>
           ))}
         </View>
+        {/* Speed Curves Section */}
+        {selectedClipId && (
+          <>
+            <Text style={[styles.speedSectionLabel, { color: colors.foreground, marginTop: 16, fontSize: 15, fontWeight: "700" }]}>
+              速度カーブ
+            </Text>
+            <Text style={{ color: colors.muted, fontSize: 12, marginBottom: 8 }}>
+              クリップ内で速度を時間変化させます
+            </Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
+              <View style={{ flexDirection: "row", gap: 8 }}>
+                {SPEED_CURVE_PRESETS.map((preset) => {
+                  const clip = tracks.flatMap((t) => t.clips).find((c) => c.id === selectedClipId);
+                  const isActive = clip?.speedCurve?.name === preset.name;
+                  return (
+                    <Pressable
+                      key={preset.name}
+                      onPress={() => {
+                        setTracks((prev) => prev.map((track) => ({
+                          ...track,
+                          clips: track.clips.map((c) =>
+                            c.id === selectedClipId
+                              ? { ...c, speedCurve: preset.name === "constant" ? undefined : { name: preset.name, points: preset.points } }
+                              : c
+                          ),
+                        })));
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      }}
+                      style={({ pressed }) => [
+                        styles.speedCurveCard,
+                        {
+                          borderColor: isActive ? colors.primary : colors.border,
+                          backgroundColor: isActive ? `${colors.primary}15` : "transparent",
+                        },
+                        pressed && { opacity: 0.7 },
+                      ]}
+                    >
+                      {/* Mini speed curve visualization */}
+                      <View style={styles.speedCurveViz}>
+                        {preset.points.map((pt, i) => {
+                          if (i === 0) return null;
+                          const prevPt = preset.points[i - 1];
+                          const x1 = prevPt.position * 68;
+                          const x2 = pt.position * 68;
+                          const y1 = 30 - (Math.min(prevPt.speed, 4) / 4) * 28;
+                          const y2 = 30 - (Math.min(pt.speed, 4) / 4) * 28;
+                          return (
+                            <View
+                              key={i}
+                              style={{
+                                position: "absolute",
+                                left: x1,
+                                top: Math.min(y1, y2),
+                                width: Math.max(x2 - x1, 1),
+                                height: Math.max(Math.abs(y2 - y1), 2),
+                                backgroundColor: isActive ? colors.primary : colors.muted,
+                                borderRadius: 1,
+                              }}
+                            />
+                          );
+                        })}
+                        {/* Dots at control points */}
+                        {preset.points.map((pt, i) => (
+                          <View
+                            key={`dot-${i}`}
+                            style={{
+                              position: "absolute",
+                              left: pt.position * 68 - 2,
+                              top: 30 - (Math.min(pt.speed, 4) / 4) * 28 - 2,
+                              width: 4,
+                              height: 4,
+                              borderRadius: 2,
+                              backgroundColor: isActive ? colors.primary : colors.muted,
+                            }}
+                          />
+                        ))}
+                      </View>
+                      <Text
+                        style={{
+                          fontSize: 10,
+                          color: isActive ? colors.primary : colors.foreground,
+                          fontWeight: isActive ? "700" : "500",
+                          textAlign: "center",
+                        }}
+                        numberOfLines={1}
+                      >
+                        {preset.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </ScrollView>
+          </>
+        )}
+
         <Pressable
           onPress={applyChanges}
           style={({ pressed }) => [
@@ -2912,6 +3008,20 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: 8,
     marginBottom: 6,
+  },
+  // ---- Speed Curve ----
+  speedCurveCard: {
+    width: 80,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    padding: 6,
+    alignItems: "center",
+  },
+  speedCurveViz: {
+    width: 68,
+    height: 32,
+    marginBottom: 4,
+    position: "relative",
   },
   // ---- Toolbar (Portrait) ----
   toolbar: {
