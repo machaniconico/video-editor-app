@@ -590,11 +590,14 @@ export function MultiTrackTimeline({
         ]}
       >
         {/* Left trim handle - large hit area */}
-        <View
+        <Pressable
           style={[
             st.trimHandleHitArea,
             { left: 0 },
           ]}
+          onPressIn={(evt) => {
+            startTrimDrag("trim-left", track.id, clip, evt as any);
+          }}
           onStartShouldSetResponder={() => true}
           onMoveShouldSetResponder={() => true}
           onStartShouldSetResponderCapture={() => true}
@@ -619,7 +622,7 @@ export function MultiTrackTimeline({
           >
             <View style={st.trimHandleBar} />
           </View>
-        </View>
+        </Pressable>
 
         {/* Clip body (long press to move horizontally) */}
         <View
@@ -717,11 +720,14 @@ export function MultiTrackTimeline({
         </View>
 
         {/* Right trim handle - large hit area */}
-        <View
+        <Pressable
           style={[
             st.trimHandleHitArea,
             { right: 0 },
           ]}
+          onPressIn={(evt) => {
+            startTrimDrag("trim-right", track.id, clip, evt as any);
+          }}
           onStartShouldSetResponder={() => true}
           onMoveShouldSetResponder={() => true}
           onStartShouldSetResponderCapture={() => true}
@@ -746,7 +752,7 @@ export function MultiTrackTimeline({
           >
             <View style={st.trimHandleBar} />
           </View>
-        </View>
+        </Pressable>
       </View>
     );
   };
@@ -1316,10 +1322,10 @@ const st = StyleSheet.create({
   // Invisible large hit area for trim handles
   trimHandleHitArea: {
     position: "absolute",
-    top: 0,
-    bottom: 0,
-    width: HANDLE_HIT_SLOP + 10,
-    zIndex: 30,
+    top: -4,
+    bottom: -4,
+    width: HANDLE_HIT_SLOP + 14,
+    zIndex: 50,
     alignItems: "center",
     justifyContent: "center",
     // Ensure touch target is large enough on web
