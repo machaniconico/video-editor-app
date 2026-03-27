@@ -22,6 +22,121 @@ export const ASPECT_RATIO_PRESETS: AspectRatioPreset[] = [
   { id: "21:9", label: "21:9", subtitle: "シネマスコープ", width: 21, height: 9 },
 ];
 
+// ---- Project Templates ----
+
+export interface ProjectTemplate {
+  id: string;
+  label: string;
+  description: string;
+  icon: string;
+  aspectRatio: string;
+  /** Pre-configured settings to apply */
+  preset: {
+    filter?: string;
+    speed?: number;
+    textOverlays?: Partial<TextOverlay>[];
+    effects?: VideoEffect[];
+    colorAdjustments?: Partial<ColorAdjustments>;
+  };
+}
+
+export const PROJECT_TEMPLATES: ProjectTemplate[] = [
+  {
+    id: "vlog",
+    label: "Vlog",
+    description: "日常の記録に最適。16:9、暖かい色味",
+    icon: "video",
+    aspectRatio: "16:9",
+    preset: {
+      filter: "warm",
+      colorAdjustments: { brightness: 5, saturation: 10, temperature: 15 },
+    },
+  },
+  {
+    id: "tiktok",
+    label: "TikTok / Reels",
+    description: "縦動画、鮮やかな色味、テキスト付き",
+    icon: "play.rectangle.fill",
+    aspectRatio: "9:16",
+    preset: {
+      filter: "vivid",
+      colorAdjustments: { contrast: 10, saturation: 15 },
+      textOverlays: [
+        { text: "タイトルを入力", fontSize: 32, bold: true, color: "#FFFFFF", x: 50, y: 15, alignment: "center", outline: { color: "#000000", width: 2 } },
+      ],
+    },
+  },
+  {
+    id: "cinematic",
+    label: "シネマティック",
+    description: "映画風の21:9、ドラマチックな色味",
+    icon: "film",
+    aspectRatio: "21:9",
+    preset: {
+      filter: "dramatic",
+      colorAdjustments: { contrast: 15, shadows: -10, highlights: -5, vignetteAmount: 30 },
+    },
+  },
+  {
+    id: "instagram",
+    label: "Instagram",
+    description: "正方形、クリーンな見た目",
+    icon: "camera",
+    aspectRatio: "1:1",
+    preset: {
+      colorAdjustments: { brightness: 5, saturation: 5, sharpness: 10 },
+    },
+  },
+  {
+    id: "presentation",
+    label: "プレゼン",
+    description: "16:9、テキスト中心のレイアウト",
+    icon: "rectangle.on.rectangle",
+    aspectRatio: "16:9",
+    preset: {
+      textOverlays: [
+        { text: "プレゼンタイトル", fontSize: 42, bold: true, color: "#FFFFFF", x: 50, y: 40, alignment: "center", background: { color: "#000000", opacity: 0.5, paddingH: 20, paddingV: 10, borderRadius: 8 } },
+        { text: "サブタイトル", fontSize: 20, bold: false, color: "#CCCCCC", x: 50, y: 55, alignment: "center" },
+      ],
+    },
+  },
+  {
+    id: "music-video",
+    label: "ミュージックビデオ",
+    description: "9:16、ネオンエフェクト付き",
+    icon: "music.note",
+    aspectRatio: "9:16",
+    preset: {
+      effects: [{ type: "neon-glow", intensity: 30 }],
+      colorAdjustments: { contrast: 10, saturation: 20 },
+    },
+  },
+];
+
+// ---- Google Fonts for Expo ----
+
+export const GOOGLE_FONTS = [
+  { id: "system", label: "システム", family: undefined },
+  { id: "serif", label: "明朝", family: "serif" },
+  { id: "monospace", label: "等幅", family: "monospace" },
+  { id: "noto-sans-jp", label: "Noto Sans JP", family: "NotoSansJP-Regular" },
+  { id: "noto-serif-jp", label: "Noto Serif JP", family: "NotoSerifJP-Regular" },
+  { id: "m-plus-rounded", label: "M+ Rounded", family: "MPLUSRounded1c-Regular" },
+  { id: "kosugi-maru", label: "小杉丸ゴシック", family: "KosugiMaru-Regular" },
+  { id: "sawarabi-gothic", label: "さわらびゴシック", family: "SawarabiGothic-Regular" },
+  { id: "zen-kaku-gothic", label: "Zen角ゴシック", family: "ZenKakuGothicNew-Regular" },
+  { id: "dela-gothic", label: "デラゴシック", family: "DelaGothicOne-Regular" },
+  { id: "hachi-maru-pop", label: "はちまるポップ", family: "HachiMaruPop-Regular" },
+];
+
+// ---- Cloud Sync types ----
+
+export interface CloudSyncState {
+  isEnabled: boolean;
+  lastSyncedAt: string | null;
+  isSyncing: boolean;
+}
+
 export type TextAlignment = "left" | "center" | "right";
 
 export type TextAnimationType =
@@ -83,13 +198,7 @@ export const TEXT_ANIMATION_PRESETS: { type: TextAnimationType; label: string }[
   { type: "wave", label: "ウェーブ" },
 ];
 
-export const FONT_FAMILIES = [
-  { id: "system", label: "システム", family: undefined },
-  { id: "serif", label: "明朝", family: "serif" },
-  { id: "monospace", label: "等幅", family: "monospace" },
-  { id: "rounded", label: "丸ゴシック", family: "System" },
-  { id: "condensed", label: "コンデンス", family: "System" },
-];
+export { GOOGLE_FONTS as FONT_FAMILIES };
 
 export interface TextTemplate {
   id: string;

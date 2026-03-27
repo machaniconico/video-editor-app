@@ -18,7 +18,7 @@ import * as Haptics from "expo-haptics";
 import { ScreenContainer } from "@/components/screen-container";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useColors } from "@/hooks/use-colors";
-import { useEditor, type VideoProject, ASPECT_RATIO_PRESETS } from "@/lib/editor-context";
+import { useEditor, type VideoProject, ASPECT_RATIO_PRESETS, PROJECT_TEMPLATES, DEFAULT_COLOR_ADJUSTMENTS } from "@/lib/editor-context";
 import { SwipeableRow } from "@/components/swipeable-row";
 
 export default function HomeScreen() {
@@ -33,6 +33,10 @@ export default function HomeScreen() {
   // Aspect ratio selection state
   const [showAspectModal, setShowAspectModal] = useState(false);
   const [pendingVideo, setPendingVideo] = useState<{ uri: string; duration: number } | null>(null);
+
+  // Template selection state
+  const [showTemplateModal, setShowTemplateModal] = useState(false);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
 
   useEffect(() => {
     loadProjects();
@@ -66,12 +70,46 @@ export default function HomeScreen() {
     setShowAspectModal(false);
 
     const project = createProject(pendingVideo.uri, pendingVideo.duration, null, aspectRatio);
+
+    // Apply template preset if selected
+    if (selectedTemplateId) {
+      const tpl = PROJECT_TEMPLATES.find((t) => t.id === selectedTemplateId);
+      if (tpl?.preset) {
+        const updates: any = {};
+        if (tpl.preset.filter) updates.filter = { id: tpl.preset.filter, name: tpl.preset.filter, intensity: 100 };
+        if (tpl.preset.speed) updates.speed = tpl.preset.speed;
+        if (tpl.preset.effects) updates.effects = tpl.preset.effects;
+        if (tpl.preset.colorAdjustments) {
+          updates.colorAdjustments = { ...DEFAULT_COLOR_ADJUSTMENTS, ...tpl.preset.colorAdjustments };
+        }
+        if (tpl.preset.textOverlays) {
+          updates.textOverlays = tpl.preset.textOverlays.map((t: any, i: number) => ({
+            id: `txt_tpl_${Date.now()}_${i}`,
+            text: t.text ?? "",
+            fontSize: t.fontSize ?? 24,
+            color: t.color ?? "#FFFFFF",
+            position: "center" as const,
+            bold: t.bold ?? false,
+            italic: t.italic ?? false,
+            x: t.x ?? 50,
+            y: t.y ?? 50,
+            rotation: 0,
+            startTime: 0,
+            endTime: pendingVideo.duration,
+            ...t,
+          }));
+        }
+        dispatch({ type: "UPDATE_CURRENT_PROJECT", payload: updates });
+      }
+      setSelectedTemplateId(null);
+    }
+
     const updatedProjects = [project, ...state.projects];
     await saveProjects(updatedProjects);
 
     setPendingVideo(null);
     router.push("/editor" as any);
-  }, [pendingVideo, createProject, router, saveProjects, state.projects]);
+  }, [pendingVideo, createProject, router, saveProjects, state.projects, selectedTemplateId, dispatch]);
 
   const duplicateProject = useCallback(
     async (proj: VideoProject) => {
@@ -235,6 +273,20 @@ export default function HomeScreen() {
           </View>
         </Pressable>
 
+        {/* Template Button */}
+        <Pressable
+          onPress={() => setShowTemplateModal(true)}
+          style={({ pressed }) => [
+            styles.templateBtn,
+            { backgroundColor: colors.surface, borderColor: colors.border },
+            pressed && { opacity: 0.7 },
+          ]}
+        >
+          <IconSymbol name="square.grid.2x2" size={20} color={colors.primary} />
+          <Text style={{ color: colors.foreground, fontSize: 15, fontWeight: "600", flex: 1, marginLeft: 10 }}>テンプレートから始める</Text>
+          <IconSymbol name="chevron.right" size={16} color={colors.muted} />
+        </Pressable>
+
         {/* Recent Projects */}
         <View style={styles.sectionHeader}>
           <Text style={[styles.sectionTitle, { color: colors.foreground }]}>最近のプロジェクト</Text>
@@ -323,6 +375,51 @@ export default function HomeScreen() {
           </Pressable>
         </Modal>
       )}
+      {/* Template Selection Modal */}
+      <Modal
+        visible={showTemplateModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowTemplateModal(false)}
+      >
+        <Pressable onPress={() => setShowTemplateModal(false)} style={styles.modalOverlay}>
+          <Pressable onPress={() => {}} style={[styles.aspectModalContent, { backgroundColor: colors.surface }]}>
+            <Text style={[styles.aspectModalTitle, { color: colors.foreground }]}>テンプレート</Text>
+            <Text style={{ color: colors.muted, fontSize: 13, textAlign: "center", marginBottom: 16 }}>
+              用途に合ったテンプレートを選んで動画を選択
+            </Text>
+            {PROJECT_TEMPLATES.map((tpl) => (
+              <Pressable
+                key={tpl.id}
+                onPress={() => {
+                  setSelectedTemplateId(tpl.id);
+                  setShowTemplateModal(false);
+                  pickVideo();
+                }}
+                style={({ pressed }) => [
+                  styles.templateListItem,
+                  { borderColor: colors.border, backgroundColor: colors.background },
+                  pressed && { opacity: 0.7, borderColor: colors.primary },
+                ]}
+              >
+                <IconSymbol name={tpl.icon as any} size={22} color={colors.primary} />
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text style={{ color: colors.foreground, fontSize: 15, fontWeight: "600" }}>{tpl.label}</Text>
+                  <Text style={{ color: colors.muted, fontSize: 12 }}>{tpl.description}</Text>
+                </View>
+                <Text style={{ color: colors.muted, fontSize: 11 }}>{tpl.aspectRatio}</Text>
+              </Pressable>
+            ))}
+            <Pressable
+              onPress={() => setShowTemplateModal(false)}
+              style={({ pressed }) => [styles.aspectCancelBtn, { borderColor: colors.border, marginTop: 8 }, pressed && { opacity: 0.7 }]}
+            >
+              <Text style={{ color: colors.foreground, fontWeight: "600", fontSize: 15 }}>キャンセル</Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
       {/* Aspect Ratio Selection Modal */}
       <Modal
         visible={showAspectModal}
@@ -489,6 +586,24 @@ const styles = StyleSheet.create({
   duplicateBtn: {
     padding: 8,
     marginRight: 4,
+  },
+  templateBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginBottom: 16,
+  },
+  templateListItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+    marginBottom: 8,
+    width: "100%",
   },
   swipeHint: {
     paddingLeft: 8,

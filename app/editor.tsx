@@ -3282,11 +3282,73 @@ export default function EditorScreen() {
           );
         })()}
 
-        {/* Voice Over placeholder */}
+        {/* Voice Over */}
         <Text style={[styles.subLabel, { color: colors.muted, marginTop: 8 }]}>ボイスオーバー</Text>
         <Pressable
-          onPress={() => {
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+          onPress={async () => {
+            try {
+              const { createVoiceRecorder } = require("@/lib/audio-service");
+              const recorder = createVoiceRecorder();
+              if (recorder.isRecording()) {
+                const uri = await recorder.stop();
+                // Add as a new audio track
+                const newTrack = {
+                  id: `track_vo_${Date.now()}`,
+                  type: "audio" as const,
+                  label: `VO ${(project?.voiceOvers?.length ?? 0) + 1}`,
+                  clips: [{
+                    id: `clip_vo_${Date.now()}`,
+                    sourceUri: uri,
+                    name: "ボイスオーバー",
+                    duration: 10,
+                    trimStart: 0,
+                    trimEnd: 10,
+                    timelineOffset: currentPlaybackTime,
+                    speed: 1.0,
+                    volume: 1.0,
+                  }],
+                  isMuted: false,
+                  isSolo: false,
+                  volume: 1.0,
+                  color: "#F59E0B",
+                };
+                setTracks((prev) => [...prev, newTrack]);
+                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+              } else {
+                await recorder.start();
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+              }
+            } catch (e: any) {
+              console.warn("Voice recording error:", e);
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+            }
+          }}
+          style={({ pressed }) => [
+            styles.effectRow,
+            { borderColor: colors.border, marginBottom: 6 },
+            pressed && { opacity: 0.7 },
+          ]}
+        >
+          <IconSymbol name="mic" size={20} color={colors.error} />
+          <View style={{ flex: 1, marginLeft: 10 }}>
+            <Text style={{ color: colors.foreground, fontSize: 14, fontWeight: "600" }}>録音開始 / 停止</Text>
+            <Text style={{ color: colors.muted, fontSize: 11 }}>再生位置から音声を録音してトラックに追加</Text>
+          </View>
+          <IconSymbol name="circle.fill" size={12} color={colors.error} />
+        </Pressable>
+
+        {/* Audio extraction */}
+        <Pressable
+          onPress={async () => {
+            if (!project) return;
+            try {
+              const { extractAudio } = require("@/lib/audio-service");
+              await extractAudio(project.videoUri);
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            } catch (e: any) {
+              console.warn("Audio extraction error:", e);
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+            }
           }}
           style={({ pressed }) => [
             styles.effectRow,
@@ -3294,12 +3356,11 @@ export default function EditorScreen() {
             pressed && { opacity: 0.7 },
           ]}
         >
-          <IconSymbol name="mic" size={20} color={colors.muted} />
+          <IconSymbol name="waveform.and.magnifyingglass" size={20} color={colors.muted} />
           <View style={{ flex: 1, marginLeft: 10 }}>
-            <Text style={{ color: colors.foreground, fontSize: 14, fontWeight: "600" }}>録音開始</Text>
-            <Text style={{ color: colors.muted, fontSize: 11 }}>再生位置から音声を録音</Text>
+            <Text style={{ color: colors.foreground, fontSize: 14, fontWeight: "600" }}>音声を抽出</Text>
+            <Text style={{ color: colors.muted, fontSize: 11 }}>動画から音声だけを分離</Text>
           </View>
-          <IconSymbol name="circle.fill" size={12} color={colors.error} />
         </Pressable>
 
         <Pressable
