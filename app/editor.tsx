@@ -30,7 +30,7 @@ import { useOrientation } from "@/hooks/use-orientation";
 import { launchImageLibraryAsync } from "expo-image-picker";
 import { MultiTrackTimeline } from "@/components/multi-track-timeline";
 import type { TimelineTrack, TransitionType, ClipTransition, Keyframe, KeyframeProperty, SpeedCurve, TextAnimationType, TextAlignment, TextOverlay as TextOverlayType } from "@/lib/editor-context";
-import { createDefaultTracks, TRANSITION_PRESETS, KEYFRAME_PROPERTY_LABELS, SPEED_CURVE_PRESETS, getSpeedAtPosition, TEXT_ANIMATION_PRESETS, FONT_FAMILIES, TEXT_TEMPLATES } from "@/lib/editor-context";
+import { createDefaultTracks, TRANSITION_PRESETS, KEYFRAME_PROPERTY_LABELS, SPEED_CURVE_PRESETS, getSpeedAtPosition, TEXT_ANIMATION_PRESETS, FONT_FAMILIES, TEXT_TEMPLATES, ASPECT_RATIO_PRESETS } from "@/lib/editor-context";
 
 // Filter definitions
 const FILTERS = [
@@ -558,6 +558,15 @@ export default function EditorScreen() {
 
   // ---- Shared sub-components ----
 
+  // Compute aspect ratio for preview
+  const projectAspectRatio = (() => {
+    const ar = project?.aspectRatio;
+    if (!ar) return undefined;
+    const preset = ASPECT_RATIO_PRESETS.find((p) => p.id === ar);
+    if (preset) return preset.width / preset.height;
+    return undefined;
+  })();
+
   const renderVideoPreview = () => (
     <View style={[
       styles.previewContainer,
@@ -571,7 +580,7 @@ export default function EditorScreen() {
         </View>
       ) : (
         <VideoView
-          style={styles.videoView}
+          style={[styles.videoView, projectAspectRatio ? { aspectRatio: projectAspectRatio, flex: undefined, alignSelf: "center" } : undefined]}
           player={player}
           contentFit="contain"
           nativeControls={false}

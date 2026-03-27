@@ -2,6 +2,26 @@ import React, { createContext, useContext, useReducer, useCallback } from "react
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 // Types
+
+// ---- Aspect Ratio types ----
+
+export interface AspectRatioPreset {
+  id: string;
+  label: string;
+  subtitle: string;
+  width: number;
+  height: number;
+}
+
+export const ASPECT_RATIO_PRESETS: AspectRatioPreset[] = [
+  { id: "9:16", label: "9:16", subtitle: "TikTok / Reels / Shorts", width: 9, height: 16 },
+  { id: "16:9", label: "16:9", subtitle: "YouTube", width: 16, height: 9 },
+  { id: "1:1", label: "1:1", subtitle: "Instagram 投稿", width: 1, height: 1 },
+  { id: "4:5", label: "4:5", subtitle: "Instagram フィード", width: 4, height: 5 },
+  { id: "4:3", label: "4:3", subtitle: "スタンダード", width: 4, height: 3 },
+  { id: "21:9", label: "21:9", subtitle: "シネマスコープ", width: 21, height: 9 },
+];
+
 export type TextAlignment = "left" | "center" | "right";
 
 export type TextAnimationType =
@@ -566,6 +586,8 @@ export interface VideoProject {
   frameSlots: FrameSlot[];
   /** Multi-track timeline */
   tracks: TimelineTrack[];
+  /** Aspect ratio (e.g. "16:9", "9:16") */
+  aspectRatio?: string;
 }
 
 const MAX_HISTORY = 50;
@@ -729,7 +751,7 @@ interface EditorContextType {
   dispatch: React.Dispatch<EditorAction>;
   loadProjects: () => Promise<void>;
   saveProjects: (projects: VideoProject[]) => Promise<void>;
-  createProject: (videoUri: string, duration: number, thumbnailUri: string | null) => VideoProject;
+  createProject: (videoUri: string, duration: number, thumbnailUri: string | null, aspectRatio?: string) => VideoProject;
   undo: () => void;
   redo: () => void;
   canUndo: boolean;
@@ -772,7 +794,7 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
   const canRedo = state.future.length > 0;
 
   const createProject = useCallback(
-    (videoUri: string, duration: number, thumbnailUri: string | null): VideoProject => {
+    (videoUri: string, duration: number, thumbnailUri: string | null, aspectRatio?: string): VideoProject => {
       const now = new Date().toISOString();
       const project: VideoProject = {
         id: `proj_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
@@ -792,6 +814,7 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
         frameLayout: "single",
         frameSlots: [],
         tracks: createDefaultTracks(videoUri, duration),
+        aspectRatio: aspectRatio ?? "16:9",
       };
       dispatch({ type: "ADD_PROJECT", payload: project });
       dispatch({ type: "SET_CURRENT_PROJECT", payload: project });

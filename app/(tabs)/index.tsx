@@ -18,7 +18,7 @@ import * as Haptics from "expo-haptics";
 import { ScreenContainer } from "@/components/screen-container";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useColors } from "@/hooks/use-colors";
-import { useEditor, type VideoProject } from "@/lib/editor-context";
+import { useEditor, type VideoProject, ASPECT_RATIO_PRESETS } from "@/lib/editor-context";
 import { SwipeableRow } from "@/components/swipeable-row";
 
 export default function HomeScreen() {
@@ -29,6 +29,10 @@ export default function HomeScreen() {
   // Confirmation dialog state (for web fallback)
   const [deleteTarget, setDeleteTarget] = useState<VideoProject | null>(null);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+
+  // Aspect ratio selection state
+  const [showAspectModal, setShowAspectModal] = useState(false);
+  const [pendingVideo, setPendingVideo] = useState<{ uri: string; duration: number } | null>(null);
 
   useEffect(() => {
     loadProjects();
@@ -49,17 +53,25 @@ export default function HomeScreen() {
       if (!result.canceled && result.assets[0]) {
         const asset = result.assets[0];
         const duration = (asset.duration ?? 0) / 1000;
-        const project = createProject(asset.uri, duration, null);
-
-        const updatedProjects = [project, ...state.projects];
-        await saveProjects(updatedProjects);
-
-        router.push("/editor" as any);
+        setPendingVideo({ uri: asset.uri, duration });
+        setShowAspectModal(true);
       }
     } catch (e) {
       console.warn("Failed to pick video:", e);
     }
-  }, [createProject, router, saveProjects, state.projects]);
+  }, []);
+
+  const confirmAspectRatio = useCallback(async (aspectRatio: string) => {
+    if (!pendingVideo) return;
+    setShowAspectModal(false);
+
+    const project = createProject(pendingVideo.uri, pendingVideo.duration, null, aspectRatio);
+    const updatedProjects = [project, ...state.projects];
+    await saveProjects(updatedProjects);
+
+    setPendingVideo(null);
+    router.push("/editor" as any);
+  }, [pendingVideo, createProject, router, saveProjects, state.projects]);
 
   const openProject = useCallback(
     (project: VideoProject) => {
@@ -282,6 +294,79 @@ export default function HomeScreen() {
           </Pressable>
         </Modal>
       )}
+      {/* Aspect Ratio Selection Modal */}
+      <Modal
+        visible={showAspectModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => {
+          setShowAspectModal(false);
+          setPendingVideo(null);
+        }}
+      >
+        <Pressable
+          onPress={() => {
+            setShowAspectModal(false);
+            setPendingVideo(null);
+          }}
+          style={styles.modalOverlay}
+        >
+          <Pressable onPress={() => {}} style={[styles.aspectModalContent, { backgroundColor: colors.surface }]}>
+            <Text style={[styles.aspectModalTitle, { color: colors.foreground }]}>
+              画面サイズを選択
+            </Text>
+            <Text style={{ color: colors.muted, fontSize: 13, textAlign: "center", marginBottom: 20 }}>
+              用途に合わせてアスペクト比を選んでください
+            </Text>
+            <View style={styles.aspectGrid}>
+              {ASPECT_RATIO_PRESETS.map((preset) => (
+                <Pressable
+                  key={preset.id}
+                  onPress={() => {
+                    if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    confirmAspectRatio(preset.id);
+                  }}
+                  style={({ pressed }) => [
+                    styles.aspectCard,
+                    { borderColor: colors.border, backgroundColor: colors.background },
+                    pressed && { opacity: 0.7, borderColor: colors.primary },
+                  ]}
+                >
+                  <View
+                    style={[
+                      styles.aspectPreview,
+                      {
+                        aspectRatio: preset.width / preset.height,
+                        backgroundColor: `${colors.primary}20`,
+                        borderColor: colors.primary,
+                      },
+                    ]}
+                  />
+                  <Text style={{ color: colors.foreground, fontSize: 16, fontWeight: "700", marginTop: 8 }}>
+                    {preset.label}
+                  </Text>
+                  <Text style={{ color: colors.muted, fontSize: 11 }} numberOfLines={1}>
+                    {preset.subtitle}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+            <Pressable
+              onPress={() => {
+                setShowAspectModal(false);
+                setPendingVideo(null);
+              }}
+              style={({ pressed }) => [
+                styles.aspectCancelBtn,
+                { borderColor: colors.border },
+                pressed && { opacity: 0.7 },
+              ]}
+            >
+              <Text style={{ color: colors.foreground, fontWeight: "600", fontSize: 15 }}>キャンセル</Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </ScreenContainer>
   );
 }
@@ -447,5 +532,44 @@ const styles = StyleSheet.create({
   modalBtnText: {
     fontSize: 16,
     fontWeight: "700",
+  },
+  // ---- Aspect Ratio Modal ----
+  aspectModalContent: {
+    width: "90%",
+    maxWidth: 400,
+    borderRadius: 20,
+    padding: 24,
+    alignItems: "center",
+  },
+  aspectModalTitle: {
+    fontSize: 22,
+    fontWeight: "800",
+    marginBottom: 4,
+  },
+  aspectGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "center",
+    gap: 12,
+    marginBottom: 16,
+  },
+  aspectCard: {
+    width: 100,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    padding: 10,
+    alignItems: "center",
+  },
+  aspectPreview: {
+    width: 50,
+    maxHeight: 60,
+    borderRadius: 4,
+    borderWidth: 1.5,
+  },
+  aspectCancelBtn: {
+    paddingVertical: 12,
+    paddingHorizontal: 32,
+    borderRadius: 10,
+    borderWidth: 1,
   },
 });

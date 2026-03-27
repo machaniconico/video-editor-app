@@ -1,6 +1,7 @@
 import * as FileSystem from "expo-file-system";
 import * as MediaLibrary from "expo-media-library";
 import type { VideoProject, ClipTransition, TransitionType } from "./editor-context";
+import { ASPECT_RATIO_PRESETS } from "./editor-context";
 
 // Quality presets
 export interface ExportSettings {
@@ -75,7 +76,26 @@ export function buildFFmpegArgs(
   settings: ExportSettings,
   outputPath: string
 ): string[] {
-  const qc = QUALITY_MAP[settings.quality];
+  const baseQc = QUALITY_MAP[settings.quality];
+  // Adjust output dimensions based on aspect ratio
+  const arPreset = ASPECT_RATIO_PRESETS.find((p) => p.id === project.aspectRatio);
+  let qc = { ...baseQc };
+  if (arPreset) {
+    const ratio = arPreset.width / arPreset.height;
+    if (ratio < 1) {
+      // Portrait (e.g. 9:16): swap width/height
+      qc = { ...baseQc, width: baseQc.height, height: Math.round(baseQc.height / ratio) };
+      // Cap to reasonable sizes
+      if (qc.height > 1920) { qc.height = 1920; qc.width = Math.round(1920 * ratio); }
+    } else if (ratio === 1) {
+      // Square
+      qc = { ...baseQc, width: baseQc.height, height: baseQc.height };
+    }
+    // For wider ratios like 21:9, keep width and adjust height
+    else if (ratio > 16 / 9) {
+      qc = { ...baseQc, height: Math.round(baseQc.width / ratio) };
+    }
+  }
   const codecFlag = settings.codec === "h265" ? "libx265" : "libx264";
 
   const args: string[] = [];
