@@ -186,8 +186,10 @@ export default function EditorScreen() {
   }, []);
 
   const panelHeight = useSharedValue(0);
+  const panelOpacity = useSharedValue(0);
   const panelAnimStyle = useAnimatedStyle(() => ({
     height: panelHeight.value,
+    opacity: panelOpacity.value,
     overflow: "hidden" as const,
   }));
 
@@ -450,13 +452,15 @@ export default function EditorScreen() {
       }
       if (activePanel === panel) {
         setActivePanel("none");
+        panelOpacity.value = withTiming(0, { duration: 150 });
         panelHeight.value = withTiming(0, { duration: 250 });
       } else {
         setActivePanel(panel);
-        panelHeight.value = withTiming(isLandscape ? 220 : 280, { duration: 250 });
+        panelHeight.value = withTiming(isLandscape ? 240 : 300, { duration: 280 });
+        panelOpacity.value = withTiming(1, { duration: 200 });
       }
     },
-    [activePanel, panelHeight, isLandscape]
+    [activePanel, panelHeight, panelOpacity, isLandscape]
   );
 
   const applyChanges = useCallback(() => {
@@ -522,6 +526,7 @@ export default function EditorScreen() {
 
     dispatch({ type: "UPDATE_CURRENT_PROJECT", payload: updates });
     setActivePanel("none");
+    panelOpacity.value = withTiming(0, { duration: 150 });
     panelHeight.value = withTiming(0, { duration: 250 });
   }, [
     project,
@@ -583,6 +588,10 @@ export default function EditorScreen() {
 
   // ---- Shared sub-components ----
 
+  // Preview zoom state
+  const [previewScale, setPreviewScale] = useState(1);
+  const pinchStartScale = useRef(1);
+
   // Compute aspect ratio for preview
   const projectAspectRatio = (() => {
     const ar = project?.aspectRatio;
@@ -598,6 +607,15 @@ export default function EditorScreen() {
       isLandscape && styles.previewContainerLandscape,
       isFullscreenPreview && { flex: 1 },
     ]}>
+      {/* Double tap to reset zoom */}
+      {previewScale !== 1 && (
+        <Pressable
+          onPress={() => setPreviewScale(1)}
+          style={{ position: "absolute", top: 8, right: 8, zIndex: 20, backgroundColor: "rgba(0,0,0,0.5)", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 }}
+        >
+          <Text style={{ color: "#fff", fontSize: 11, fontWeight: "600" }}>{Math.round(previewScale * 100)}% (タップでリセット)</Text>
+        </Pressable>
+      )}
       {effectivePlayerState.videoHidden ? (
         <View style={[styles.videoView, { backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' }]}>
           <IconSymbol name="eye.slash" size={48} color="#555" />

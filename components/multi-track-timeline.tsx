@@ -1358,15 +1358,15 @@ const st = StyleSheet.create({
     fontWeight: "500",
   },
   sectionLabel: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
     borderBottomWidth: 0.5,
   },
   sectionLabelText: {
-    fontSize: 9,
-    fontWeight: "700",
+    fontSize: 10,
+    fontWeight: "800",
     textTransform: "uppercase",
-    letterSpacing: 1,
+    letterSpacing: 1.5,
   },
   tracksScroll: {
     maxHeight: 290,
@@ -1463,14 +1463,14 @@ const st = StyleSheet.create({
   clipBody: {
     flex: 1,
     borderWidth: 1.5,
-    borderRadius: 4,
-    paddingHorizontal: 4,
-    paddingVertical: 3,
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 4,
     justifyContent: "center",
     overflow: "hidden",
   },
   clipName: {
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: "700",
   },
   clipInfo: {
