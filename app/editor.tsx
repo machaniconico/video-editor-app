@@ -95,7 +95,7 @@ const BGM_TRACKS = [
 
 const BGM_CATEGORIES = ["すべて", "ポップ", "チル", "エピック", "アコースティック"];
 
-type PanelType = "none" | "trim" | "filter" | "text" | "music" | "speed" | "frame" | "transition" | "keyframe" | "effects" | "color" | "clip-tools";
+type PanelType = "none" | "trim" | "filter" | "text" | "music" | "speed" | "frame" | "transition" | "keyframe" | "effects" | "color" | "clip-tools" | "sticker" | "audio-tools";
 
 // Frame layout definitions
 const FRAME_LAYOUTS: { id: import("@/lib/editor-context").FrameLayout; label: string; icon: string; slots: number }[] = [
@@ -148,6 +148,13 @@ export default function EditorScreen() {
   const [effects, setEffects] = useState<VideoEffect[]>(project?.effects ?? []);
   const [colorAdj, setColorAdj] = useState<ColorAdjustments>(project?.colorAdjustments ?? { ...DEFAULT_COLOR_ADJUSTMENTS });
   const [isFullscreenPreview, setIsFullscreenPreview] = useState(false);
+
+  // Sticker state
+  const [stickers, setStickers] = useState<import("@/lib/editor-context").StickerOverlay[]>(project?.stickers ?? []);
+  const [selectedStickerId, setSelectedStickerId] = useState<string | null>(null);
+
+  // Beat markers
+  const [beatMarkers, setBeatMarkers] = useState<import("@/lib/editor-context").BeatMarker[]>(project?.beatMarkers ?? []);
 
   // Current playback position for timeline playhead
   const [currentPlaybackTime, setCurrentPlaybackTime] = useState(0);
@@ -498,6 +505,8 @@ export default function EditorScreen() {
     updates.tracks = tracks;
     updates.effects = effects;
     updates.colorAdjustments = colorAdj;
+    updates.stickers = stickers;
+    updates.beatMarkers = beatMarkers;
 
     dispatch({ type: "UPDATE_CURRENT_PROJECT", payload: updates });
     setActivePanel("none");
@@ -672,6 +681,34 @@ export default function EditorScreen() {
           >
             {overlay.text}
           </Text>
+        </View>
+      ))}
+      {/* Sticker overlays */}
+      {stickers.map((stk) => (
+        <View
+          key={stk.id}
+          onStartShouldSetResponder={() => true}
+          onMoveShouldSetResponder={() => true}
+          onResponderGrant={() => setSelectedStickerId(stk.id)}
+          onResponderMove={(evt) => {
+            const { locationX, locationY } = evt.nativeEvent;
+            const dx = (locationX - 20) * 0.3;
+            const dy = (locationY - 20) * 0.3;
+            setStickers((prev) => prev.map((s) =>
+              s.id === stk.id ? { ...s, x: Math.max(0, Math.min(100, s.x + dx)), y: Math.max(0, Math.min(100, s.y + dy)) } : s
+            ));
+          }}
+          style={[
+            styles.freeTextOverlay,
+            {
+              left: `${stk.x}%`,
+              top: `${stk.y}%`,
+              transform: [{ scale: stk.scale }, { rotate: `${stk.rotation}deg` }],
+            },
+            selectedStickerId === stk.id && { borderWidth: 1, borderColor: colors.primary, borderStyle: "dashed" as any },
+          ]}
+        >
+          <Text style={{ fontSize: 36 }}>{stk.emoji}</Text>
         </View>
       ))}
       {/* Legacy single text overlay for backward compat */}
@@ -896,6 +933,8 @@ export default function EditorScreen() {
         {activePanel === "effects" && renderEffectsPanel()}
         {activePanel === "color" && renderColorPanel()}
         {activePanel === "clip-tools" && renderClipToolsPanel()}
+        {activePanel === "sticker" && renderStickerPanel()}
+        {activePanel === "audio-tools" && renderAudioToolsPanel()}
       </View>
     </Animated.View>
   );
@@ -3087,6 +3126,192 @@ export default function EditorScreen() {
     );
   };
 
+  // ---- Sticker Panel ----
+  const EMOJI_STICKERS = ["⭐", "❤️", "🔥", "😂", "👍", "🎉", "💯", "✨", "👏", "🙌", "💪", "🎵", "🎬", "📸", "💡", "🚀", "💎", "🏆", "👑", "🌟", "😎", "🤩", "💥", "⚡", "🎯", "🎨", "🎭", "🎸", "🎮", "📢"];
+
+  const addSticker = useCallback((emoji: string) => {
+    const newSticker: import("@/lib/editor-context").StickerOverlay = {
+      id: `stk_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      emoji,
+      x: 50,
+      y: 50,
+      scale: 1,
+      rotation: 0,
+      startTime: 0,
+      endTime: project?.duration ?? 10,
+    };
+    setStickers((prev) => [...prev, newSticker]);
+    setSelectedStickerId(newSticker.id);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  }, [project]);
+
+  const renderStickerPanel = () => (
+    <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+      <View style={styles.panelInner}>
+        <Text style={[styles.panelTitle, { color: colors.foreground }]}>ステッカー</Text>
+
+        {/* Emoji grid */}
+        <View style={styles.transitionGrid}>
+          {EMOJI_STICKERS.map((emoji) => (
+            <Pressable
+              key={emoji}
+              onPress={() => addSticker(emoji)}
+              style={({ pressed }) => [
+                { width: 44, height: 44, borderRadius: 10, alignItems: "center" as const, justifyContent: "center" as const, backgroundColor: `${colors.muted}15` },
+                pressed && { opacity: 0.7, transform: [{ scale: 1.1 }] },
+              ]}
+            >
+              <Text style={{ fontSize: 24 }}>{emoji}</Text>
+            </Pressable>
+          ))}
+        </View>
+
+        {/* Active stickers list */}
+        {stickers.length > 0 && (
+          <>
+            <Text style={[styles.subLabel, { color: colors.muted, marginTop: 12 }]}>配置済み ({stickers.length})</Text>
+            {stickers.map((stk) => {
+              const isSelected = selectedStickerId === stk.id;
+              return (
+                <View key={stk.id} style={[styles.effectRow, { borderColor: isSelected ? colors.primary : colors.border, marginBottom: 6 }]}>
+                  <Text style={{ fontSize: 24, marginRight: 8 }}>{stk.emoji}</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: colors.foreground, fontSize: 12 }}>
+                      位置: ({Math.round(stk.x)}%, {Math.round(stk.y)}%) 拡大: {stk.scale.toFixed(1)}x
+                    </Text>
+                  </View>
+                  <Pressable onPress={() => setStickers((prev) => prev.filter((s) => s.id !== stk.id))}>
+                    <IconSymbol name="trash" size={16} color={colors.error} />
+                  </Pressable>
+                </View>
+              );
+            })}
+          </>
+        )}
+
+        <Pressable
+          onPress={applyChanges}
+          style={({ pressed }) => [styles.applyBtn, { backgroundColor: colors.primary, marginTop: 12 }, pressed && { opacity: 0.9 }]}
+        >
+          <Text style={styles.applyBtnText}>適用</Text>
+        </Pressable>
+      </View>
+    </ScrollView>
+  );
+
+  // ---- Audio Tools Panel (Beat Markers, Noise Reduction, Voice Over) ----
+  const renderAudioToolsPanel = () => (
+    <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+      <View style={styles.panelInner}>
+        <Text style={[styles.panelTitle, { color: colors.foreground }]}>音声ツール</Text>
+
+        {/* Beat Markers */}
+        <Text style={[styles.subLabel, { color: colors.muted }]}>ビートマーカー</Text>
+        <Text style={{ color: colors.muted, fontSize: 11, marginBottom: 8 }}>
+          音楽のビートに合わせてタップしてマーカーを打つ
+        </Text>
+        <Pressable
+          onPress={() => {
+            setBeatMarkers((prev) => [...prev, { time: currentPlaybackTime }]);
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+          }}
+          style={({ pressed }) => [
+            styles.applyBtn,
+            { backgroundColor: colors.warning },
+            pressed && { opacity: 0.8, transform: [{ scale: 0.97 }] },
+          ]}
+        >
+          <Text style={styles.applyBtnText}>🥁 ビートをタップ ({beatMarkers.length})</Text>
+        </Pressable>
+
+        {beatMarkers.length > 0 && (
+          <View style={{ marginTop: 8, marginBottom: 12 }}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+              <Text style={{ color: colors.foreground, fontSize: 13, fontWeight: "600" }}>
+                マーカー: {beatMarkers.length}個
+              </Text>
+              <Pressable onPress={() => setBeatMarkers([])}>
+                <Text style={{ color: colors.error, fontSize: 12, fontWeight: "600" }}>全削除</Text>
+              </Pressable>
+            </View>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              <View style={{ flexDirection: "row", gap: 4 }}>
+                {beatMarkers.sort((a, b) => a.time - b.time).map((bm, i) => (
+                  <View key={i} style={[styles.miniChip, { backgroundColor: colors.warning }]}>
+                    <Text style={{ color: "#FFF", fontSize: 10, fontWeight: "600" }}>{bm.time.toFixed(1)}s</Text>
+                  </View>
+                ))}
+              </View>
+            </ScrollView>
+          </View>
+        )}
+
+        {/* Noise Reduction */}
+        <Text style={[styles.subLabel, { color: colors.muted, marginTop: 8 }]}>ノイズリダクション</Text>
+        <Text style={{ color: colors.muted, fontSize: 11, marginBottom: 8 }}>
+          音声トラックのノイズを軽減
+        </Text>
+        {(() => {
+          const audioTrack = tracks.find((t) => t.type === "audio");
+          if (!audioTrack) return <Text style={{ color: colors.muted, fontSize: 12 }}>音声トラックがありません</Text>;
+          return (
+            <View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>
+              {["なし", "軽い", "中", "強い"].map((level, i) => {
+                const volumes = [1.0, 0.9, 0.8, 0.7]; // Simulated via volume for now
+                const isActive = Math.abs(audioTrack.volume - volumes[i]) < 0.05;
+                return (
+                  <Pressable
+                    key={level}
+                    onPress={() => {
+                      setTracks((prev) => prev.map((t) =>
+                        t.id === audioTrack.id ? { ...t, volume: volumes[i] } : t
+                      ));
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    }}
+                    style={({ pressed }) => [
+                      styles.miniChip,
+                      { flex: 1, alignItems: "center" as const, paddingVertical: 10, backgroundColor: isActive ? colors.primary : colors.border },
+                      pressed && { opacity: 0.7 },
+                    ]}
+                  >
+                    <Text style={{ color: isActive ? "#FFF" : colors.muted, fontSize: 12, fontWeight: "600" }}>{level}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          );
+        })()}
+
+        {/* Voice Over placeholder */}
+        <Text style={[styles.subLabel, { color: colors.muted, marginTop: 8 }]}>ボイスオーバー</Text>
+        <Pressable
+          onPress={() => {
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+          }}
+          style={({ pressed }) => [
+            styles.effectRow,
+            { borderColor: colors.border, marginBottom: 12 },
+            pressed && { opacity: 0.7 },
+          ]}
+        >
+          <IconSymbol name="mic" size={20} color={colors.muted} />
+          <View style={{ flex: 1, marginLeft: 10 }}>
+            <Text style={{ color: colors.foreground, fontSize: 14, fontWeight: "600" }}>録音開始</Text>
+            <Text style={{ color: colors.muted, fontSize: 11 }}>再生位置から音声を録音</Text>
+          </View>
+          <IconSymbol name="circle.fill" size={12} color={colors.error} />
+        </Pressable>
+
+        <Pressable
+          onPress={applyChanges}
+          style={({ pressed }) => [styles.applyBtn, { backgroundColor: colors.primary }, pressed && { opacity: 0.9 }]}
+        >
+          <Text style={styles.applyBtnText}>適用</Text>
+        </Pressable>
+      </View>
+    </ScrollView>
+  );
+
   // ---- Effects Panel ----
   const toggleEffect = useCallback((type: VideoEffect["type"]) => {
     setEffects((prev) => {
@@ -3311,6 +3536,8 @@ export default function EditorScreen() {
         { key: "effects" as PanelType, icon: "sparkles" as const, label: "エフェクト" },
         { key: "color" as PanelType, icon: "slider.horizontal.3" as const, label: "カラー" },
         { key: "clip-tools" as PanelType, icon: "wrench" as const, label: "クリップ" },
+        { key: "sticker" as PanelType, icon: "face.smiling" as const, label: "ステッカー" },
+        { key: "audio-tools" as PanelType, icon: "waveform" as const, label: "音声ツール" },
       ]).map((tool) => (
         <Pressable
           key={tool.key}
