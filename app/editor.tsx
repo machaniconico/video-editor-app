@@ -148,6 +148,7 @@ export default function EditorScreen() {
   const [effects, setEffects] = useState<VideoEffect[]>(project?.effects ?? []);
   const [colorAdj, setColorAdj] = useState<ColorAdjustments>(project?.colorAdjustments ?? { ...DEFAULT_COLOR_ADJUSTMENTS });
   const [isFullscreenPreview, setIsFullscreenPreview] = useState(false);
+  const [expandedGroup, setExpandedGroup] = useState<string | null>(null);
 
   // Sticker state
   const [stickers, setStickers] = useState<import("@/lib/editor-context").StickerOverlay[]>(project?.stickers ?? []);
@@ -3574,56 +3575,131 @@ export default function EditorScreen() {
     </ScrollView>
   );
 
-  const renderToolbar = () => (
-    <View
-      style={[
-        isLandscape ? styles.toolbarLandscape : styles.toolbar,
-        {
-          backgroundColor: colors.surface,
-          borderTopColor: colors.border,
-          borderLeftColor: colors.border,
-        },
-      ]}
-    >
-      {([
+  // Toolbar groups
+  const TOOLBAR_GROUPS = [
+    {
+      id: "edit",
+      icon: "scissors" as const,
+      label: "編集",
+      items: [
         { key: "trim" as PanelType, icon: "scissors" as const, label: "トリミング" },
-        { key: "filter" as PanelType, icon: "wand.and.stars" as const, label: "フィルター" },
-        { key: "text" as PanelType, icon: "textformat" as const, label: "テキスト" },
-        { key: "music" as PanelType, icon: "music.note" as const, label: "BGM" },
         { key: "speed" as PanelType, icon: "speedometer" as const, label: "速度" },
         { key: "frame" as PanelType, icon: "rectangle.on.rectangle" as const, label: "フレーム" },
+      ],
+    },
+    {
+      id: "look",
+      icon: "wand.and.stars" as const,
+      label: "見た目",
+      items: [
+        { key: "filter" as PanelType, icon: "wand.and.stars" as const, label: "フィルター" },
+        { key: "color" as PanelType, icon: "slider.horizontal.3" as const, label: "カラー" },
+        { key: "effects" as PanelType, icon: "sparkles" as const, label: "エフェクト" },
+      ],
+    },
+    {
+      id: "text",
+      icon: "textformat" as const,
+      label: "テキスト",
+      items: [
+        { key: "text" as PanelType, icon: "textformat" as const, label: "テキスト" },
+        { key: "sticker" as PanelType, icon: "face.smiling" as const, label: "ステッカー" },
+      ],
+    },
+    {
+      id: "audio",
+      icon: "music.note" as const,
+      label: "音声",
+      items: [
+        { key: "music" as PanelType, icon: "music.note" as const, label: "BGM" },
+        { key: "audio-tools" as PanelType, icon: "waveform" as const, label: "音声ツール" },
+      ],
+    },
+    {
+      id: "clip",
+      icon: "film" as const,
+      label: "クリップ",
+      items: [
+        { key: "clip-tools" as PanelType, icon: "wrench" as const, label: "クリップツール" },
         { key: "transition" as PanelType, icon: "arrow.right.arrow.left" as const, label: "切替効果" },
         { key: "keyframe" as PanelType, icon: "diamond" as const, label: "キーフレーム" },
-        { key: "effects" as PanelType, icon: "sparkles" as const, label: "エフェクト" },
-        { key: "color" as PanelType, icon: "slider.horizontal.3" as const, label: "カラー" },
-        { key: "clip-tools" as PanelType, icon: "wrench" as const, label: "クリップ" },
-        { key: "sticker" as PanelType, icon: "face.smiling" as const, label: "ステッカー" },
-        { key: "audio-tools" as PanelType, icon: "waveform" as const, label: "音声ツール" },
-      ]).map((tool) => (
-        <Pressable
-          key={tool.key}
-          onPress={() => openPanel(tool.key)}
-          style={({ pressed }) => [
-            isLandscape ? styles.toolBtnLandscape : styles.toolBtn,
-            pressed && { opacity: 0.6 },
-          ]}
-        >
-          <IconSymbol
-            name={tool.icon}
-            size={isLandscape ? 22 : 24}
-            color={activePanel === tool.key ? colors.primary : colors.muted}
-          />
-          <Text
-            style={[
-              styles.toolLabel,
-              { color: activePanel === tool.key ? colors.primary : colors.muted },
-              isLandscape && { fontSize: 9 },
-            ]}
-          >
-            {tool.label}
-          </Text>
-        </Pressable>
-      ))}
+      ],
+    },
+  ];
+
+  const renderToolbar = () => (
+    <View style={{ backgroundColor: colors.surface, borderTopWidth: 0.5, borderTopColor: colors.border, borderLeftWidth: isLandscape ? 0.5 : 0, borderLeftColor: colors.border }}>
+      {/* Sub-items row (shown when a group is expanded) */}
+      {expandedGroup && (
+        <View style={[styles.subToolbar, { borderBottomColor: colors.border }]}>
+          {TOOLBAR_GROUPS.find((g) => g.id === expandedGroup)?.items.map((tool) => (
+            <Pressable
+              key={tool.key}
+              onPress={() => {
+                openPanel(tool.key);
+                setExpandedGroup(null);
+              }}
+              style={({ pressed }) => [
+                styles.subToolBtn,
+                activePanel === tool.key && { backgroundColor: `${colors.primary}15` },
+                pressed && { opacity: 0.6 },
+              ]}
+            >
+              <IconSymbol
+                name={tool.icon}
+                size={18}
+                color={activePanel === tool.key ? colors.primary : colors.foreground}
+              />
+              <Text style={[styles.subToolLabel, { color: activePanel === tool.key ? colors.primary : colors.foreground }]}>
+                {tool.label}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+      )}
+
+      {/* Main group bar */}
+      <View style={[isLandscape ? styles.toolbarLandscape : styles.toolbar]}>
+        {TOOLBAR_GROUPS.map((group) => {
+          const isExpanded = expandedGroup === group.id;
+          const hasActiveChild = group.items.some((i) => i.key === activePanel);
+          return (
+            <Pressable
+              key={group.id}
+              onPress={() => {
+                if (group.items.length === 1) {
+                  openPanel(group.items[0].key);
+                  setExpandedGroup(null);
+                } else {
+                  setExpandedGroup(isExpanded ? null : group.id);
+                }
+              }}
+              style={({ pressed }) => [
+                isLandscape ? styles.toolBtnLandscape : styles.toolBtn,
+                pressed && { opacity: 0.6 },
+              ]}
+            >
+              <IconSymbol
+                name={group.icon}
+                size={isLandscape ? 22 : 24}
+                color={isExpanded || hasActiveChild ? colors.primary : colors.muted}
+              />
+              <Text
+                style={[
+                  styles.toolLabel,
+                  { color: isExpanded || hasActiveChild ? colors.primary : colors.muted },
+                  isLandscape && { fontSize: 9 },
+                ]}
+              >
+                {group.label}
+              </Text>
+              {isExpanded && (
+                <View style={[styles.groupIndicator, { backgroundColor: colors.primary }]} />
+              )}
+            </Pressable>
+          );
+        })}
+      </View>
     </View>
   );
 
@@ -4415,6 +4491,33 @@ const styles = StyleSheet.create({
   },
   toolLabel: {
     fontSize: 11,
+    fontWeight: "600",
+  },
+  groupIndicator: {
+    position: "absolute",
+    bottom: 0,
+    width: 16,
+    height: 3,
+    borderRadius: 1.5,
+  },
+  subToolbar: {
+    flexDirection: "row",
+    justifyContent: "center",
+    gap: 4,
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    borderBottomWidth: 0.5,
+  },
+  subToolBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  subToolLabel: {
+    fontSize: 12,
     fontWeight: "600",
   },
   // ---- Toolbar (Landscape) ----
